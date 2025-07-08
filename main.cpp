@@ -7,196 +7,201 @@
 
 // The lexer returns tokens [0-255] if it is an unknown character, otherwise one
 // of these for known things.
-enum class Token {
-  tok_eof = -1,
+enum class Token : int32_t{
+	tok_eof = -1,
 
-  // commands
-  tok_def = -2,
-  tok_extern = -3,
+	// commands
+	tok_def = -2,
+	tok_extern = -3,
 
-  // primary
-  tok_identifier = -4,
-  tok_number = -5,
+	// primary
+	tok_identifier = -4,
+	tok_number = -5,
 
-  // error handling
-  tok_error = -6,
+	// error handling
+	tok_error = -6,
 };
 
 static std::string IdentifierStr; // Filled in if tok_identifier
-static double NumVal;             // Filled in if tok_number
-static int LineNum = 1;           // Track line numbers for error reporting
+static double NumVal; // Filled in if tok_number
+static int LineNum = 1; // Track line numbers for error reporting
 
 // Cache for keywords to avoid string comparisons
 static const std::unordered_map<std::string, Token> Keywords = {
-    {"def", Token::tok_def},
-    {"extern", Token::tok_extern}
+	{"def", Token::tok_def},
+	{"extern", Token::tok_extern}
 };
 
 /// gettok - Return the next token from standard input.
+
+static void skipWhitespace(int &LastChar) {
+	while (std::isspace(LastChar)) {
+		if (LastChar == '\n') {
+			LineNum++;
+		}
+		LastChar = getchar();
+	}
+}
+
+static Token parseIdentifier(int &LastChar) {
+	IdentifierStr.clear();
+	IdentifierStr.reserve(32);
+
+	do {
+		IdentifierStr += static_cast<char>(LastChar);
+		LastChar = getchar();
+	} while (std::isalnum(LastChar) || LastChar == '_');
+
+  if (const auto it = Keywords.find(IdentifierStr); it != Keywords.end()) {
+		return it->second;
+	}
+	return Token::tok_identifier;
+}
+
+static Token parseNumber(int &LastChar) {
+	std::string NumStr;
+	NumStr.reserve(32);
+	bool hasDecimalPoint = false;
+
+	do {
+		if (LastChar == '.') {
+			if (hasDecimalPoint) { // 当前正在解析的数字已经包含小数点
+				std::println(stderr, "Error: Invalid number format at line {}", LineNum);
+				return Token::tok_error;
+			}
+			hasDecimalPoint = true;
+		}
+		NumStr += static_cast<char>(LastChar);
+		LastChar = getchar();
+	} while (std::isdigit(LastChar) || LastChar == '.');
+
+	if (NumStr == ".") {
+		return static_cast<Token>('.');
+	}
+
+	char *endPtr{nullptr};
+	NumVal = std::strtod(NumStr.c_str(), &endPtr);
+
+	if (*endPtr != '\0') {
+    std::println(stderr, "Error: Invalid number format at line {}", LineNum);
+	  return Token::tok_error;
+	}
+
+	return Token::tok_number;
+}
+
+static bool skipComment(int &LastChar) {
+	do {
+		LastChar = getchar();
+	} while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
+
+	if (LastChar == '\n') {
+		LineNum++;
+	}
+
+	return LastChar != EOF;
+}
+
 static Token gettok() {
-  static int LastChar = ' ';
+	static int LastChar = ' ';
 
-  // Skip any whitespace.
-  while (std::isspace(LastChar)) {
-    if (LastChar == '\n') {
-      LineNum++;
-    }
-    LastChar = getchar();
-  }
+	skipWhitespace(LastChar);
 
-  if (std::isalpha(LastChar) || LastChar == '_') {
-    // identifier: [a-zA-Z_][a-zA-Z0-9_]*
-    IdentifierStr.clear();
-    IdentifierStr.reserve(32); // Reserve space to avoid reallocations
+	if (std::isalpha(LastChar) || LastChar == '_') {
+		return parseIdentifier(LastChar);
+	}
 
-    do {
-      IdentifierStr += std::to_string(LastChar);
-      LastChar = getchar();
-    } while (std::isalnum(LastChar) || LastChar == '_');
+	if (std::isdigit(LastChar) || LastChar == '.') {
+		return parseNumber(LastChar);
+	}
 
-    // Check if it's a keyword
-    auto it = Keywords.find(IdentifierStr);
-    if (it != Keywords.end()) {
-      return it->second;
-    }
-    return Token::tok_identifier;
-  }
+	if (LastChar == '#') {
+		if (skipComment(LastChar)) { // 如果已处理完注释且未到翻译单元末尾，则换行，继续处理
+			return gettok();
+		}
+	}
 
-  if (std::isdigit(LastChar) || LastChar == '.') {
-    // Number: [0-9.]+
-    std::string NumStr;
-    NumStr.reserve(32);
-    bool hasDecimalPoint = false;
+	if (LastChar == EOF) {
+		return Token::tok_eof; //
+	}
 
-    do {
-      if (LastChar == '.') {
-        if (hasDecimalPoint) {
-          // Multiple decimal points - error
-          std::println(stderr, "Error: Invalid number format at line {}",
-                       LineNum);
-          return Token::tok_error;
-        }
-        hasDecimalPoint = true;
-      }
-      NumStr += std::to_string(LastChar);
-      LastChar = getchar();
-    } while (std::isdigit(LastChar) || LastChar == '.');
-
-    // Handle case where number starts with '.' but has no digits
-    if (NumStr == ".") {
-      return static_cast<Token>('.');
-    }
-
-    char* endPtr;
-    NumVal = std::strtod(NumStr.c_str(), &endPtr);
-
-    // Check for conversion errors
-    if (*endPtr != '\0') {
-      std::cerr << "Error: Invalid number format at line " << LineNum <<
-          std::endl;
-      return Token::tok_error;
-    }
-
-    return Token::tok_number;
-  }
-
-  if (LastChar == '#') {
-    // Comment until end of line.
-    do {
-      LastChar = getchar();
-    } while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
-
-    if (LastChar == '\n') {
-      LineNum++;
-    }
-
-    if (LastChar != EOF) {
-      return gettok();
-    }
-  }
-
-  // Check for end of file.  Don't eat the EOF.
-  if (LastChar == EOF) {
-    return Token::tok_eof;
-  }
-
-  // Otherwise, just return the character as its ascii value.
-  int ThisChar = LastChar;
-  LastChar = getchar();
-  return static_cast<Token>(ThisChar);
+	int ThisChar = LastChar;
+	LastChar = getchar();
+	return static_cast<Token>(ThisChar);
 }
 
 /// ExprAST - Base class for all expression nodes.
 class ExprAST {
 public:
-  virtual ~ExprAST() = default;
+	virtual ~ExprAST() = default;
 };
 
 /// NumberExprAST - Expression class for numeric literals like "1.0".
 class NumberExprAST : public ExprAST {
-  double Val;
+	double Val;
 
 public:
-  NumberExprAST(double Val) : Val(Val) {
-  }
+	NumberExprAST(double Val) : Val(Val) {
+	}
 };
 
 /// VariableExprAST - Expression class for referencing a variable, like "a".
 class VariableExprAST : public ExprAST {
-  std::string Name;
+	std::string Name;
 
 public:
-  VariableExprAST(const std::string& Name) : Name(Name) {
-  }
+	VariableExprAST(const std::string &Name) : Name(Name) {
+	}
 };
 
 /// BinaryExprAST - Expression class for a binary operator.
 class BinaryExprAST : public ExprAST {
-  char Op;
-  std::unique_ptr<ExprAST> LHS, RHS;
+	char Op;
+	std::unique_ptr<ExprAST> LHS, RHS;
 
 public:
-  BinaryExprAST(char Op, std::unique_ptr<ExprAST> LHS,
-                std::unique_ptr<ExprAST> RHS)
-    : Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {
-  }
+	BinaryExprAST(char Op, std::unique_ptr<ExprAST> LHS,
+	              std::unique_ptr<ExprAST> RHS)
+		: Op(Op), LHS(std::move(LHS)), RHS(std::move(RHS)) {
+	}
 };
 
 /// CallExprAST - Expression class for function calls.
 class CallExprAST : public ExprAST {
-  std::string Callee;
-  std::vector<std::unique_ptr<ExprAST> > Args;
+	std::string Callee;
+	std::vector<std::unique_ptr<ExprAST> > Args;
 
 public:
-  CallExprAST(const std::string& Callee,
-              std::vector<std::unique_ptr<ExprAST> > Args)
-    : Callee(Callee), Args(std::move(Args)) {
-  }
+	CallExprAST(const std::string &Callee,
+	            std::vector<std::unique_ptr<ExprAST> > Args)
+		: Callee(Callee), Args(std::move(Args)) {
+	}
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
 /// which captures its name, and its argument names (thus implicitly the number
 /// of arguments the function takes).
 class PrototypeAST {
-  std::string Name;
-  std::vector<std::string> Args;
+	std::string Name;
+	std::vector<std::string> Args;
 
 public:
-  PrototypeAST(const std::string& Name, std::vector<std::string> Args)
-    : Name(Name), Args(std::move(Args)) {
-  }
+	PrototypeAST(const std::string &Name, std::vector<std::string> Args)
+		: Name(Name), Args(std::move(Args)) {
+	}
 
-  const std::string& getName() const { return Name; }
+	const std::string &getName() const { return Name; }
 };
 
 /// FunctionAST - This class represents a function definition itself.
 class FunctionAST {
-  std::unique_ptr<PrototypeAST> Proto;
-  std::unique_ptr<ExprAST> Body;
+	std::unique_ptr<PrototypeAST> Proto;
+	std::unique_ptr<ExprAST> Body;
 
 public:
-  FunctionAST(std::unique_ptr<PrototypeAST> Proto,
-              std::unique_ptr<ExprAST> Body)
-    : Proto(std::move(Proto)), Body(std::move(Body)) {
-  }
+	FunctionAST(std::unique_ptr<PrototypeAST> Proto,
+	            std::unique_ptr<ExprAST> Body)
+		: Proto(std::move(Proto)), Body(std::move(Body)) {
+	}
 };
+
