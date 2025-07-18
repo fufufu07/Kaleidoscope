@@ -227,7 +227,7 @@ std::unique_ptr<ExprAST> LogError(const char* Str) {
 }
 
 std::unique_ptr<PrototypeAST> LogErrorP(const char* Str) {
-  std::println(stderr, "Error: {}", Str);
+  LogError(Str);
   return nullptr;
 }
 
@@ -244,9 +244,45 @@ static std::unique_ptr<ExprAST> ParseParenExpr() {
   auto V = ParseExpression();
   if (!V) return nullptr;
 
-  if (CurTok != Token::tok_eof && CurTok != ')') {
+  if (CurTok != Token::tok_eof && CurTok != static_cast<Token>(')')) {
     return LogError("expected ')'");
   }
   getNextToken(); // eat ).
   return V;
+}
+
+/// identifierexpr
+///   ::= identifier
+///   ::= identifier '(' expression* ')'
+static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
+  std::string IdName = IdentifierStr;
+
+  getNextToken();  // eat identifier.
+
+  if (CurTok != static_cast<Token>('(')) // Simple variable ref.
+    return std::make_unique<VariableExprAST>(IdName);
+
+  // Call.
+  getNextToken();  // eat (
+  std::vector<std::unique_ptr<ExprAST>> Args;
+  if (CurTok != static_cast<Token>(')')) {
+    while (true) {
+      if (auto Arg = ParseExpression())
+        Args.push_back(std::move(Arg));
+      else
+        return nullptr;
+
+      if (CurTok == static_cast<Token>(')'))
+        break;
+
+      if (CurTok != static_cast<Token>(','))
+        return LogError("Expected ')' or ',' in argument list");
+      getNextToken();
+    }
+  }
+
+  // Eat the ')'.
+  getNextToken();
+
+  return std::make_unique<CallExprAST>(IdName, std::move(Args));
 }
