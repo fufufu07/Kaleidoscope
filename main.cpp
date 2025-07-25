@@ -2,13 +2,13 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <print>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
 
 // The lexer returns tokens [0-255] if it is an unknown character, otherwise one
 // of these for known things.
@@ -164,15 +164,15 @@ class VariableExprAST : public ExprAST {
 
 /// BinaryExprAST - Expression class for a binary operator.
 class BinaryExprAST : public ExprAST {
-  char op_;
+  Token op_;
   std::unique_ptr<ExprAST> lhs_, rhs_;
 
  public:
-  BinaryExprAST(char op, std::unique_ptr<ExprAST> lhs,
+  BinaryExprAST(Token op, std::unique_ptr<ExprAST> lhs,
                 std::unique_ptr<ExprAST> rhs) noexcept
       : op_(op), lhs_(std::move(lhs)), rhs_(std::move(rhs)) {}
 
-  [[nodiscard]] char GetOp() const noexcept { return op_; }
+  [[nodiscard]] Token GetOp() const noexcept { return op_; }
   [[nodiscard]] const ExprAST* GetLHS() const noexcept { return lhs_.get(); }
   [[nodiscard]] const ExprAST* GetRHS() const noexcept { return rhs_.get(); }
 };
@@ -183,12 +183,16 @@ class CallExprAST : public ExprAST {
   std::vector<std::unique_ptr<ExprAST>> args_;
 
  public:
-  CallExprAST(std::string callee,
-              std::vector<std::unique_ptr<ExprAST>> args)
+  CallExprAST(std::string callee, std::vector<std::unique_ptr<ExprAST>> args)
       : callee_(std::move(callee)), args_(std::move(args)) {}
 
-  [[nodiscard]] const std::string& GetCallee() const noexcept { return callee_; }
-  [[nodiscard]] const std::vector<std::unique_ptr<ExprAST>>& GetArgs() const noexcept { return args_; }
+  [[nodiscard]] const std::string& GetCallee() const noexcept {
+    return callee_;
+  }
+  [[nodiscard]] const std::vector<std::unique_ptr<ExprAST>>& GetArgs()
+      const noexcept {
+    return args_;
+  }
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
@@ -203,7 +207,9 @@ class PrototypeAST {
       : name_(std::move(name)), args_(std::move(args)) {}
 
   [[nodiscard]] const std::string& GetName() const noexcept { return name_; }
-  [[nodiscard]] const std::vector<std::string>& GetArgs() const noexcept { return args_; }
+  [[nodiscard]] const std::vector<std::string>& GetArgs() const noexcept {
+    return args_;
+  }
 };
 
 /// FunctionAST - This class represents a function definition itself.
@@ -216,7 +222,9 @@ class FunctionAST {
               std::unique_ptr<ExprAST> body) noexcept
       : proto_(std::move(proto)), body_(std::move(body)) {}
 
-  [[nodiscard]] const PrototypeAST* GetProto() const noexcept { return proto_.get(); }
+  [[nodiscard]] const PrototypeAST* GetProto() const noexcept {
+    return proto_.get();
+  }
   [[nodiscard]] const ExprAST* GetBody() const noexcept { return body_.get(); }
 };
 
@@ -264,7 +272,7 @@ static std::unique_ptr<ExprAST> ParseParenExpr() {
 ///   ::= identifier
 ///   ::= identifier '(' expression* ')'
 static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
-  std::string id_name = identifier_str;  // Remember the identifier name
+  std::string id_name{identifier_str};  // Remember the identifier name
 
   GetNextToken();  // eat identifier.
 
@@ -276,7 +284,8 @@ static std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   GetNextToken();                              // eat (
   std::vector<std::unique_ptr<ExprAST>> args;  // Argument expressions.
 
-  if (cur_tok != static_cast<Token>(')')) { // If the next token is not ')', we have to
+  if (cur_tok !=
+      static_cast<Token>(')')) {  // If the next token is not ')', we have to
     while (true) {                // Parse the arguments.
       if (auto arg = ParseExpression()) {
         args.push_back(std::move(arg));
@@ -316,4 +325,79 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
     default:
       return LogError("unknown token when expecting an expression");
   }
+}
+
+/// BinopPrecedence - This holds the precedence for each binary operator that is
+/// defined.
+static std::map<Token, int> binop_precedence{};
+
+/// GetTokPrecedence - Get the precedence of the pending binary operator token.
+static int GetTokPrecedence() {
+  if (!isascii(cur_tok)) return -1;
+
+  // Make sure it's a declared binop.
+  const int tok_precedence = binop_precedence[cur_tok];
+  if (tok_precedence <= 0) {
+    return -1;
+  }
+  return tok_precedence;
+}
+static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
+                                              std::unique_ptr<ExprAST> LHS);
+/// expression
+///   ::= primary binoprhs
+///
+static std::unique_ptr<ExprAST> ParseExpression() {
+  auto LHS = ParsePrimary();
+  if (!LHS) return nullptr;
+
+  return ParseBinOpRHS(0, std::move(LHS));
+}
+
+/// binoprhs
+///   ::= ('+' primary)*
+static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
+                                              std::unique_ptr<ExprAST> LHS) {
+  // If this is a binop, find its precedence.
+  while (true) {
+    const int tok_prec =
+        GetTokPrecedence();  // Get the precedence of the current token.
+
+    // If this is a binop that binds at least as tightly as the current binop,
+    // consume it, otherwise we are done.
+    if (tok_prec < ExprPrec) {
+      return LHS;
+    }
+    // Okay, we know this is a binop.
+    Token bin_op = cur_tok;
+    GetNextToken();  // eat binop
+
+    // Parse the primary expression after the binary operator.
+    auto rhs{ParsePrimary()};
+    if (!rhs) {
+      return nullptr;
+    }
+    // If BinOp binds less tightly with RHS than the operator after RHS, let
+    // the pending operator take RHS as its LHS.
+    if (const int next_prec{GetTokPrecedence()}; tok_prec < next_prec) {
+      if (auto pending_rhs = ParsePrimary()) {
+        rhs = ParseBinOpRHS(tok_prec + 1, std::move(rhs));
+        if (!rhs) {
+          return nullptr;
+        }
+      }
+    }
+
+    // Merge LHS/RHS.
+    LHS =
+        std::make_unique<BinaryExprAST>(bin_op, std::move(LHS), std::move(rhs));
+  }  // loop around to the top of the while loop.
+}
+int main() {
+  // Install standard binary operators.
+  // 1 is lowest precedence.
+  binop_precedence[static_cast<Token>('<')] = 10;
+  binop_precedence[static_cast<Token>('+')] = 20;
+  binop_precedence[static_cast<Token>('-')] = 20;
+  binop_precedence[static_cast<Token>('*')] = 40;  // highest.
 }
