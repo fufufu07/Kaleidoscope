@@ -1,6 +1,7 @@
 #include <sys/stat.h>
 
 #include <cstdlib>
+#include <expected>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -25,6 +26,9 @@ enum class Token : int32_t {
 
   // error handling
   kTokError = -6,
+  // operators
+  kTokLParen = '(',
+  kTokRParen = ')',
 };
 
 static std::string identifier_str;  // Filled in if tok_identifier
@@ -141,8 +145,9 @@ class ExprAST {
  public:
   virtual ~ExprAST() = default;
 };
-
-/// NumberExprAST - Expression class for numeric literals like "1.0".
+static std::unique_ptr<ExprAST> ParseExpression();
+/// NumberExprAST - Expression class for numeric literals
+/// like "1.0".
 class NumberExprAST : public ExprAST {
   double val_;
 
@@ -393,6 +398,103 @@ static std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
         std::make_unique<BinaryExprAST>(bin_op, std::move(LHS), std::move(rhs));
   }  // loop around to the top of the while loop.
 }
+
+/// prototype
+///   ::= id '(' id* ')'
+static std::unique_ptr<PrototypeAST> ParsePrototype() {
+  // 使用结构化绑定和期望类型
+  if (cur_tok != Token::kTokIdentifier) [[unlikely]] {
+    return LogErrorP("Expected function name in prototype");
+  }
+
+  auto fn_name = std::string{identifier_str};
+  GetNextToken();
+
+  if (cur_tok != Token::kTokLParen) [[unlikely]] {
+    return LogErrorP("Expected '(' in prototype");
+  }
+
+  // 可以考虑预留空间
+  std::vector<std::string> arg_names;
+  arg_names.reserve(8);  // 大多数函数参数不会超过8个
+
+  while (GetNextToken() == Token::kTokIdentifier) {
+    arg_names.emplace_back(identifier_str);
+  }
+
+  if (cur_tok != Token::kTokRParen) [[unlikely]] {
+    return LogErrorP("Expected ')' in prototype");
+  }
+
+  GetNextToken();
+  return std::make_unique<PrototypeAST>(std::move(fn_name),
+                                        std::move(arg_names));
+}
+
+/// definition ::= 'def' prototype expression
+static std::expected<std::unique_ptr<FunctionAST>, std::string_view>
+ParseDefinition() {
+  GetNextToken();
+
+  auto proto = ParsePrototype();
+  if (!proto) {
+    return std::unexpected("Failed to parse function prototype");
+  }
+
+  auto body = ParseExpression();
+  if (!body) {
+    return std::unexpected("Failed to parse function body");
+  }
+
+  return std::make_unique<FunctionAST>(std::move(proto), std::move(body));
+}
+
+/// external ::= 'extern' prototype
+static std::expected<std::unique_ptr<PrototypeAST>, std::string_view>
+ParseExtern() {
+  GetNextToken();  // eat extern.
+
+  auto proto = ParsePrototype();
+  if (!proto) [[unlikely]] {
+    return std::unexpected("Failed to parse extern prototype");
+  }
+
+  return proto;
+}
+
+/// toplevelexpr ::= expression
+template <typename ExprType>
+  requires std::derived_from<ExprType, ExprAST>
+static std::unique_ptr<FunctionAST> WrapAsTopLevel(
+    std::unique_ptr<ExprType> expr) {
+  auto proto =
+      std::make_unique<PrototypeAST>("__anon_expr", std::vector<std::string>{});
+  return std::make_unique<FunctionAST>(std::move(proto), std::move(expr));
+}
+
+/// top ::= definition | external | expression | ';'
+static void MainLoop() {
+  while (true) {
+    std::print(stderr, "ready> ");
+    switch (cur_tok) {
+      case Token::kTokEof:
+        return;
+      case ';':  // ignore top-level semicolons.
+        GetNextToken();
+        break;
+      case Token::kTokDef:
+        HandleDefinition();
+        break;
+      case Token::kTokExtern:
+        HandleExtern();
+        break;
+      default:
+        HandleTopLevelExpression();
+        break;
+    }
+  }
+}
+
 int main() {
   // Install standard binary operators.
   // 1 is lowest precedence.
