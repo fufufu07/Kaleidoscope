@@ -7,7 +7,6 @@
 // Forward declarations for handlers
 static void HandleDefinition();
 static void HandleExtern();
-static void HandleTopLevelExpression();
 
 /// HandleDefinition - Handle function definitions
 static void HandleDefinition() {
@@ -28,16 +27,12 @@ static void HandleExtern() {
     GetNextToken();
   }
 }
-
-/// HandleTopLevelExpression - Handle top-level expressions
-static void HandleTopLevelExpression() {
-  // Evaluate a top-level expression into an anonymous function.
-  if (auto fn_ast = WrapAsTopLevel(ParseExpression())) {
-    std::println(stderr, "Parsed a top-level expr.");
-  } else {
-    // Skip token for error recovery.
-    GetNextToken();
+/// WrapAsTopLevel - Wrap an expression as a top-level function
+static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
+  if (auto expr = ParseExpression()) {
+    return WrapAsTopLevel(std::move(expr));
   }
+  return nullptr;
 }
 
 /// top ::= definition | external | expression | ';'
@@ -57,7 +52,7 @@ static void MainLoop() {
         HandleExtern();
         break;
       default:
-        HandleTopLevelExpression();
+        ParseTopLevelExpr();
         break;
     }
   }

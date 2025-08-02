@@ -5,11 +5,13 @@
 #include <vector>
 
 #include "Token.h"
+#include "llvm/IR/Value.h"
 
 /// ExprAST - Base class for all expression nodes.
 class ExprAST {
  public:
   virtual ~ExprAST() = default;
+  virtual llvm::Value* codegen() = 0;  /// Generate LLVM code for this expression
 };
 
 /// NumberExprAST - Expression class for numeric literals like "1.0".
@@ -20,6 +22,8 @@ class NumberExprAST : public ExprAST {
   explicit NumberExprAST(double val) noexcept : val_(val) {}
 
   [[nodiscard]] double GetValue() const noexcept { return val_; }
+
+  llvm::Value* codegen() override;
 };
 
 /// VariableExprAST - Expression class for referencing a variable, like "a".
@@ -30,6 +34,8 @@ class VariableExprAST : public ExprAST {
   explicit VariableExprAST(std::string name) : name_(std::move(name)) {}
 
   [[nodiscard]] const std::string& GetName() const noexcept { return name_; }
+
+  llvm::Value* codegen() override;
 };
 
 /// BinaryExprAST - Expression class for a binary operator.
@@ -45,6 +51,8 @@ class BinaryExprAST : public ExprAST {
   [[nodiscard]] Token GetOp() const noexcept { return op_; }
   [[nodiscard]] const ExprAST* GetLHS() const noexcept { return lhs_.get(); }
   [[nodiscard]] const ExprAST* GetRHS() const noexcept { return rhs_.get(); }
+
+  llvm::Value* codegen() override;
 };
 
 /// CallExprAST - Expression class for function calls.
@@ -63,6 +71,8 @@ class CallExprAST : public ExprAST {
       const noexcept {
     return args_;
   }
+
+  llvm::Value* codegen() override;
 };
 
 /// PrototypeAST - This class represents the "prototype" for a function,
@@ -80,6 +90,7 @@ class PrototypeAST {
   [[nodiscard]] const std::vector<std::string>& GetArgs() const noexcept {
     return args_;
   }
+
 };
 
 /// FunctionAST - This class represents a function definition itself.

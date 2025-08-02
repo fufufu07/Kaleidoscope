@@ -117,8 +117,8 @@ Token GetTok() {
   return static_cast<Token>(this_char);
 }
 
-Token GetNextToken() { 
-  return cur_tok = GetTok(); 
+Token GetNextToken() {
+  return cur_tok = GetTok();
 }
 
 Token GetCurrentToken() {
