@@ -91,6 +91,7 @@ class PrototypeAST {
     return args_;
   }
 
+  llvm::Function* codegen() const;
 };
 
 /// FunctionAST - This class represents a function definition itself.

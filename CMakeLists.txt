@@ -18,10 +18,8 @@ find_package(ZLIB REQUIRED)
 include_directories(${ZLIB_INCLUDE_DIR})
 add_executable(Kaleidoscope main.cpp Lexer.cpp
         Parser.cpp
-        "Generation to LLVM IR.h"
-        "Generation to LLVM IR.h"
-        "Generation to LLVM IR.cpp"
-        "Generation to LLVM IR.cpp")
+        AST.cpp
+)
 # 链接LLVM库
 llvm_map_components_to_libnames(LLVM_LIBS core support irreader)
 target_link_libraries(Kaleidoscope ${LLVM_LIBS} ${ZLIB_LIBRARY})
