@@ -108,4 +108,6 @@ class FunctionAST {
     return proto_.get();
   }
   [[nodiscard]] const ExprAST* GetBody() const noexcept { return body_.get(); }
+
+  llvm::Function* codegen();
 };

@@ -73,6 +73,40 @@ llvm::Value* BinaryExprAST::codegen() {
   }
 }
 
+/// CallExprAST::codegen - Code generation for function calls.
+/// This function generates LLVM IR for a function call expression.
+/// It looks up the function by name, checks the number of arguments, and generates
+/// the call instruction with the provided arguments.
+/// @return A pointer to the LLVM Value representing the function call, or nullptr on error.
+/// If the function is not found or the number of arguments does not match, it logs an error.
+/// If the function call is successful, it returns the generated call instruction.
+/// The function expects the callee name and a vector of argument expressions.
+/// It retrieves the function from the module, checks the argument count, and generates the call.
+llvm::Value *CallExprAST::codegen() {
+  // Look up the name in the global module table.
+  llvm::Function *callee_f = TheModule->getFunction(callee_);
+  if (!callee_f) {
+    return LogErrorV("Unknown function referenced");
+  }
+
+  // If argument mismatch error.
+  if (callee_f->arg_size() != args_.size()) {// Check if the number of arguments matches
+    return LogErrorV("Incorrect # arguments passed");
+  }
+  /// Generate code for each argument.
+  /// We create a vector of llvm::Value* to hold the generated code for each argument.
+  /// This is necessary because CreateCall expects a vector of Value pointers.
+  std::vector<llvm::Value *> args_v;
+  for (const auto & arg : args_) {
+    args_v.push_back(arg->codegen());
+    if (!args_v.back()) {
+      return nullptr;
+    }
+  }
+
+  return Builder->CreateCall(callee_f, args_v, "calltmp");
+}
+
 llvm::Function* PrototypeAST::codegen() const {
   // Make the function type:  double(double,double) etc.
   std::vector<llvm::Type*> Doubles(args_.size(),
@@ -91,4 +125,38 @@ llvm::Function* PrototypeAST::codegen() const {
   }
 
   return F;
+}
+
+llvm::Function *FunctionAST::codegen() {
+  // First, check for an existing function from a previous 'extern' declaration.
+  llvm::Function* the_function = TheModule->getFunction(proto_->GetName());
+
+  if (!the_function)
+    the_function = proto_->codegen();
+
+  if (!the_function)
+    return nullptr;
+
+  if (!the_function->empty())
+    return static_cast<llvm::Function*>(LogErrorV("Function cannot be redefined."));
+  // Create a new basic block to start insertion into.
+  llvm::BasicBlock* bb = llvm::BasicBlock::Create(*TheContext, "entry", the_function);
+  Builder->SetInsertPoint(bb);
+
+  // Record the function arguments in the NamedValues map.
+  NamedValues.clear();
+  for (auto& arg : the_function->args())
+    NamedValues[std::string(arg.getName())] = &arg;
+  if (llvm::Value* ret_val = body_->codegen()) {
+    // Finish off the function.
+    Builder->CreateRet(ret_val);
+
+    // Validate the generated code, checking for consistency.
+    verifyFunction(*the_function);
+
+    return the_function;
+  }
+  // Error reading body, remove function.
+  the_function->eraseFromParent();
+  return nullptr;
 }
