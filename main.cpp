@@ -5,11 +5,12 @@
 #include "Parser.h"
 
 // Forward declarations for handlers
-static void HandleDefinition();
-static void HandleExtern();
+void HandleDefinition();
+void HandleExtern();
+void HandleTopLevelExpression();
 
 /// HandleDefinition - Handle function definitions
-static void HandleDefinition() {
+void HandleDefinition() {
   if (auto fn_ast = ParseDefinition()) {
     std::println(stderr, "Parsed a function definition.");
   } else {
@@ -19,7 +20,7 @@ static void HandleDefinition() {
 }
 
 /// HandleExtern - Handle external declarations
-static void HandleExtern() {
+void HandleExtern() {
   if (auto proto_ast = ParseExtern()) {
     std::println(stderr, "Parsed an extern.");
   } else {
@@ -28,7 +29,7 @@ static void HandleExtern() {
   }
 }
 /// WrapAsTopLevel - Wrap an expression as a top-level function
-static std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
+std::unique_ptr<FunctionAST> ParseTopLevelExpr() {
   if (auto expr = ParseExpression()) {
     return WrapAsTopLevel(std::move(expr));
   }
@@ -52,7 +53,7 @@ static void MainLoop() {
         HandleExtern();
         break;
       default:
-        ParseTopLevelExpr();
+        HandleTopLevelExpression();
         break;
     }
   }

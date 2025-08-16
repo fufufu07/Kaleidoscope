@@ -221,7 +221,6 @@ ParseExtern() {
   if (!proto) [[unlikely]] {
     return std::unexpected("Failed to parse extern prototype");
   }
-
   return proto;
 }
 

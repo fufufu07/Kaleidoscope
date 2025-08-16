@@ -4,28 +4,10 @@
 #include <memory>
 
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
-
-// 全局静态变量，用于支持 LLVM IR 的生成和管理
-
-// LLVMContext 是 LLVM 的核心类，用于存储与编译相关的全局信息（如类型和常量）。
-// 使用 std::unique_ptr 确保内存的自动管理。
-std::unique_ptr<llvm::LLVMContext> TheContext;
-
-// IRBuilder 是一个帮助类，用于简化 LLVM IR 指令的生成。
-// 它提供了方便的接口来创建常见的指令（如算术运算、函数调用等）。
-std::unique_ptr<llvm::IRBuilder<> > Builder;
-
-// Module 表示一个完整的代码单元（通常对应一个源文件）。
-// 它是生成和优化 LLVM IR 的核心容器，包含函数和全局变量等信息。
-std::unique_ptr<llvm::Module> TheModule;
-
-// 映射表，用于将变量名（字符串）映射到对应的 LLVM Value 对象。
-// Value 是 LLVM 中的基类，表示 IR 中的一个值（如变量、常量等）。
-// NamedValues 通常用于在代码生成过程中查找变量的值。
-std::map<std::string, llvm::Value*> NamedValues;
+#include "llvm/IR/Verifier.h"
+#include "LLVM IR.h"
 #include "Parser.h"
 
 llvm::Value* LogErrorV(const char* Str) {
@@ -82,22 +64,23 @@ llvm::Value* BinaryExprAST::codegen() {
 /// If the function call is successful, it returns the generated call instruction.
 /// The function expects the callee name and a vector of argument expressions.
 /// It retrieves the function from the module, checks the argument count, and generates the call.
-llvm::Value *CallExprAST::codegen() {
+llvm::Value* CallExprAST::codegen() {
   // Look up the name in the global module table.
-  llvm::Function *callee_f = TheModule->getFunction(callee_);
+  llvm::Function* callee_f = TheModule->getFunction(callee_);
   if (!callee_f) {
     return LogErrorV("Unknown function referenced");
   }
 
   // If argument mismatch error.
-  if (callee_f->arg_size() != args_.size()) {// Check if the number of arguments matches
+  if (callee_f->arg_size() != args_.size()) {
+    // Check if the number of arguments matches
     return LogErrorV("Incorrect # arguments passed");
   }
   /// Generate code for each argument.
   /// We create a vector of llvm::Value* to hold the generated code for each argument.
   /// This is necessary because CreateCall expects a vector of Value pointers.
-  std::vector<llvm::Value *> args_v;
-  for (const auto & arg : args_) {
+  std::vector<llvm::Value*> args_v;
+  for (const auto& arg : args_) {
     args_v.push_back(arg->codegen());
     if (!args_v.back()) {
       return nullptr;
@@ -107,46 +90,67 @@ llvm::Value *CallExprAST::codegen() {
   return Builder->CreateCall(callee_f, args_v, "calltmp");
 }
 
+/// PrototypeAST::codegen - Code generation for function prototypes.
+/// This function generates LLVM IR for a function prototype.
+/// It creates a function type based on the specified return type and argument types,
+/// and then creates a function with the specified name and type in the module.
+/// It also sets names for all arguments in the function.
+/// @return  A pointer to the LLVM Function representing the prototype, or nullptr on error.
+/// PrototypeAST::codegen - Code generation for function prototypes.
 llvm::Function* PrototypeAST::codegen() const {
   // Make the function type:  double(double,double) etc.
-  std::vector<llvm::Type*> Doubles(args_.size(),
-                                   llvm::Type::getDoubleTy(*TheContext));
-  llvm::FunctionType* FT =
-      llvm::FunctionType::get(llvm::Type::getDoubleTy(*TheContext), Doubles,
+  const std::vector<llvm::Type*> doubles(args_.size(),
+                                 llvm::Type::getDoubleTy(*TheContext));
+  // Create a function type with the specified return type and argument types.
+  llvm::FunctionType* ft =
+      llvm::FunctionType::get(llvm::Type::getDoubleTy(*TheContext), doubles,
                               false);
-
-  llvm::Function* F =
-      llvm::Function::Create(FT, llvm::Function::ExternalLinkage, name_,
+  // Create a function with the specified name and type.
+  llvm::Function* f =
+      llvm::Function::Create(ft, llvm::Function::ExternalLinkage, name_,
                              TheModule.get());
   // Set names for all arguments.
   unsigned idx = 0;
-  for (auto& arg : F->args()) {
+  for (auto& arg : f->args()) {
     arg.setName(args_[idx++]);
   }
 
-  return F;
+  return f;
 }
 
-llvm::Function *FunctionAST::codegen() {
+/// FunctionAST::codegen - Code generation for function definitions.
+/// This function generates LLVM IR for a function definition.
+/// @return  A pointer to the LLVM Function representing the function definition, or nullptr on error.
+/// FunctionAST::codegen - Code generation for function definitions.
+llvm::Function* FunctionAST::codegen() const {
   // First, check for an existing function from a previous 'extern' declaration.
   llvm::Function* the_function = TheModule->getFunction(proto_->GetName());
 
-  if (!the_function)
+  // If we have not yet created the function, create it now.
+  if (!the_function) {
     the_function = proto_->codegen();
+    // If the function cannot be created, return nullptr.
+    if (!the_function) {
+      return nullptr;
+    }
+  }
 
-  if (!the_function)
-    return nullptr;
-
+  // If the function already exists, check if it has the same signature.
   if (!the_function->empty())
-    return static_cast<llvm::Function*>(LogErrorV("Function cannot be redefined."));
+    return static_cast<llvm::Function*>(LogErrorV(
+        "Function cannot be redefined."));
   // Create a new basic block to start insertion into.
-  llvm::BasicBlock* bb = llvm::BasicBlock::Create(*TheContext, "entry", the_function);
+  llvm::BasicBlock* bb = llvm::BasicBlock::Create(
+      *TheContext, "entry", the_function);
   Builder->SetInsertPoint(bb);
 
   // Record the function arguments in the NamedValues map.
   NamedValues.clear();
-  for (auto& arg : the_function->args())
-    NamedValues[std::string(arg.getName())] = &arg;
+  for (auto& arg : the_function->args()) {
+    NamedValues[std::string{arg.getName()}] = &arg;
+  }
+  // Generate code for the function body.
+  // If the body is not valid, return nullptr.
   if (llvm::Value* ret_val = body_->codegen()) {
     // Finish off the function.
     Builder->CreateRet(ret_val);
