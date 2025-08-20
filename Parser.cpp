@@ -15,14 +15,14 @@ std::unique_ptr<ExprAST> LogError(std::string_view str) {
   return nullptr;
 }
 
-std::unique_ptr<PrototypeAST> LogErrorP(std::string_view str) {
+std::unique_ptr<PrototypeAst> LogErrorP(std::string_view str) {
   std::println(stderr, "Error: {}", str);
   return nullptr;
 }
 
 /// GetTokPrecedence - Get the precedence of the pending binary operator token.
 int GetTokPrecedence() {
-  Token cur_tok = GetCurrentToken();
+  Token cur_tok = get_current_token();
   if (!isascii(static_cast<int>(cur_tok))) return -1;
 
   // Make sure it's a declared binop.
@@ -36,22 +36,22 @@ int GetTokPrecedence() {
 /// numberexpr ::= number
 std::unique_ptr<ExprAST> ParseNumberExpr() {
   auto result = std::make_unique<NumberExprAST>(num_val);
-  GetNextToken();  // consume the number
+  get_next_token();  // consume the number
   return result;
 }
 
 /// parenexpr ::= '(' expression ')'
 std::unique_ptr<ExprAST> ParseParenExpr() {
-  GetNextToken();  // eat (.
+  get_next_token();  // eat (.
   auto expr = ParseExpression();
   if (!expr) {
     return nullptr;
   }
 
-  if (GetCurrentToken() != static_cast<Token>(')')) {
+  if (get_current_token() != static_cast<Token>(')')) {
     return LogError("expected ')'");
   }
-  GetNextToken();  // eat ).
+  get_next_token();  // eat ).
   return expr;
 }
 
@@ -61,17 +61,17 @@ std::unique_ptr<ExprAST> ParseParenExpr() {
 std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   std::string id_name{identifier_str};  // Remember the identifier name
 
-  GetNextToken();  // eat identifier.
+  get_next_token();  // eat identifier.
 
-  if (GetCurrentToken() != static_cast<Token>('(')) {  // Simple variable ref.
+  if (get_current_token() != static_cast<Token>('(')) {  // Simple variable ref.
     return std::make_unique<VariableExprAST>(std::move(id_name));
   }
 
   // Call.
-  GetNextToken();                              // eat (
+  get_next_token();                              // eat (
   std::vector<std::unique_ptr<ExprAST>> args;  // Argument expressions.
 
-  if (GetCurrentToken() !=
+  if (get_current_token() !=
       static_cast<Token>(')')) {  // If the next token is not ')', we have to
     while (true) {                // Parse the arguments.
       if (auto arg = ParseExpression()) {
@@ -80,19 +80,19 @@ std::unique_ptr<ExprAST> ParseIdentifierExpr() {
         return nullptr;
       }
 
-      if (GetCurrentToken() == static_cast<Token>(')')) {
+      if (get_current_token() == static_cast<Token>(')')) {
         break;
       }
 
-      if (GetCurrentToken() != static_cast<Token>(',')) {
+      if (get_current_token() != static_cast<Token>(',')) {
         return LogError("Expected ')' or ',' in argument list");
       }
-      GetNextToken();  // eat the ','
+      get_next_token();  // eat the ','
     }
   }
 
   // Eat the ')'.
-  GetNextToken();
+  get_next_token();
 
   return std::make_unique<CallExprAST>(std::move(id_name), std::move(args));
 }
@@ -102,7 +102,7 @@ std::unique_ptr<ExprAST> ParseIdentifierExpr() {
 ///   ::= numberexpr
 ///   ::= parenexpr
 std::unique_ptr<ExprAST> ParsePrimary() {
-  switch (GetCurrentToken()) {
+  switch (get_current_token()) {
     case Token::kTokIdentifier:
       return ParseIdentifierExpr();
     case Token::kTokNumber:
@@ -129,8 +129,8 @@ std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
       return LHS;
     }
     // Okay, we know this is a binop.
-    Token bin_op = GetCurrentToken();
-    GetNextToken();  // eat binop
+    Token bin_op = get_current_token();
+    get_next_token();  // eat binop
 
     // Parse the primary expression after the binary operator.
     auto rhs{ParsePrimary()};
@@ -164,16 +164,16 @@ std::unique_ptr<ExprAST> ParseExpression() {
 
 /// prototype
 ///   ::= id '(' id* ')'
-std::unique_ptr<PrototypeAST> ParsePrototype() {
+std::unique_ptr<PrototypeAst> ParsePrototype() {
   // 使用结构化绑定和期望类型
-  if (GetCurrentToken() != Token::kTokIdentifier) [[unlikely]] {
+  if (get_current_token() != Token::kTokIdentifier) [[unlikely]] {
     return LogErrorP("Expected function name in prototype");
   }
 
   auto fn_name = std::string{identifier_str};
-  GetNextToken();
+  get_next_token();
 
-  if (GetCurrentToken() != Token::kTokLParen) [[unlikely]] {
+  if (get_current_token() != Token::kTokLParen) [[unlikely]] {
     return LogErrorP("Expected '(' in prototype");
   }
 
@@ -181,23 +181,23 @@ std::unique_ptr<PrototypeAST> ParsePrototype() {
   std::vector<std::string> arg_names;
   arg_names.reserve(8);  // 大多数函数参数不会超过8个
 
-  while (GetNextToken() == Token::kTokIdentifier) {
+  while (get_next_token() == Token::kTokIdentifier) {
     arg_names.emplace_back(identifier_str);
   }
 
-  if (GetCurrentToken() != Token::kTokRParen) [[unlikely]] {
+  if (get_current_token() != Token::kTokRParen) [[unlikely]] {
     return LogErrorP("Expected ')' in prototype");
   }
 
-  GetNextToken();
-  return std::make_unique<PrototypeAST>(std::move(fn_name),
+  get_next_token();
+  return std::make_unique<PrototypeAst>(std::move(fn_name),
                                         std::move(arg_names));
 }
 
 /// definition ::= 'def' prototype expression
 std::expected<std::unique_ptr<FunctionAST>, std::string_view>
 ParseDefinition() {
-  GetNextToken();
+  get_next_token();
 
   auto proto = ParsePrototype();
   if (!proto) {
@@ -213,9 +213,9 @@ ParseDefinition() {
 }
 
 /// external ::= 'extern' prototype
-std::expected<std::unique_ptr<PrototypeAST>, std::string_view>
+std::expected<std::unique_ptr<PrototypeAst>, std::string_view>
 ParseExtern() {
-  GetNextToken();  // eat extern.
+  get_next_token();  // eat extern.
 
   auto proto = ParsePrototype();
   if (!proto) [[unlikely]] {
@@ -230,7 +230,7 @@ template <typename ExprType>
 std::unique_ptr<FunctionAST> WrapAsTopLevel(
     std::unique_ptr<ExprType> expr) {
   auto proto =
-      std::make_unique<PrototypeAST>("__anon_expr", std::vector<std::string>{});
+      std::make_unique<PrototypeAst>("__anon_expr", std::vector<std::string>{});
   return std::make_unique<FunctionAST>(std::move(proto), std::move(expr));
 }
 

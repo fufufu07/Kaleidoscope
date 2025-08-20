@@ -88,7 +88,7 @@ static bool SkipComment(int& last_char) noexcept {
   return last_char != EOF;
 }
 
-Token GetTok() {
+Token get_tok() {
   static int last_char = ' ';
 
   SkipWhitespace(last_char);
@@ -104,7 +104,7 @@ Token GetTok() {
   if (last_char == '#') {
     if (SkipComment(last_char)) {
       // 如果已处理完注释且未到文件末尾，则递归继续处理
-      return GetTok();
+      return get_tok();
     }
   }
 
@@ -117,10 +117,10 @@ Token GetTok() {
   return static_cast<Token>(this_char);
 }
 
-Token GetNextToken() {
-  return cur_tok = GetTok();
+Token get_next_token() {
+  return cur_tok = get_tok();
 }
 
-Token GetCurrentToken() {
+Token get_current_token() {
   return cur_tok;
 }

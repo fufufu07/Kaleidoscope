@@ -61,8 +61,8 @@ public:
 
 /// CallExprAST - Expression class for function calls.
 class CallExprAST : public ExprAST {
-  std::string callee_;
-  std::vector<std::unique_ptr<ExprAST> > args_;
+  std::string callee_; // Function name being called
+  std::vector<std::unique_ptr<ExprAST> > args_; // Arguments to the function call
 
 public:
   CallExprAST(std::string callee, std::vector<std::unique_ptr<ExprAST> > args)
@@ -84,12 +84,12 @@ public:
 /// PrototypeAST - This class represents the "prototype" for a function,
 /// which captures its name, and its argument names (thus implicitly the number
 /// of arguments the function takes).
-class PrototypeAST {
+class PrototypeAst {
   std::string name_;
   std::vector<std::string> args_;
 
 public:
-  PrototypeAST(std::string name, std::vector<std::string> args)
+  PrototypeAst(std::string name, std::vector<std::string> args)
     : name_(std::move(name)), args_(std::move(args)) {
   }
 
@@ -104,20 +104,20 @@ public:
 
 /// FunctionAST - This class represents a function definition itself.
 class FunctionAST {
-  std::unique_ptr<PrototypeAST> proto_; // 函数声明
+  std::unique_ptr<PrototypeAst> proto_; // 函数声明
   std::unique_ptr<ExprAST> body_;       // 函数体
 
 public:
-  FunctionAST(std::unique_ptr<PrototypeAST> proto,
+  FunctionAST(std::unique_ptr<PrototypeAst> proto,
               std::unique_ptr<ExprAST> body) noexcept
     : proto_(std::move(proto)), body_(std::move(body)) {
   }
 
-  [[nodiscard]] const PrototypeAST* GetProto() const noexcept {
+  [[nodiscard]] const PrototypeAst* GetProto() const noexcept {
     return proto_.get();
   }
 
   [[nodiscard]] const ExprAST* GetBody() const noexcept { return body_.get(); }
 
-  llvm::Function* codegen() const;
+  llvm::Function* codegen();
 };

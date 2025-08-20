@@ -15,9 +15,9 @@ std::unique_ptr<ExprAST> ParsePrimary();
 std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec, std::unique_ptr<ExprAST> LHS);
 
 /// Prototype and function parsing
-std::unique_ptr<PrototypeAST> ParsePrototype();
+std::unique_ptr<PrototypeAst> ParsePrototype();
 std::expected<std::unique_ptr<FunctionAST>, std::string_view> ParseDefinition();
-std::expected<std::unique_ptr<PrototypeAST>, std::string_view> ParseExtern();
+std::expected<std::unique_ptr<PrototypeAst>, std::string_view> ParseExtern();
 
 /// Utility functions
 template <typename ExprType>
@@ -26,7 +26,7 @@ std::unique_ptr<FunctionAST> WrapAsTopLevel(std::unique_ptr<ExprType> expr);
 
 /// Error logging
 std::unique_ptr<ExprAST> LogError(std::string_view str);
-std::unique_ptr<PrototypeAST> LogErrorP(std::string_view str);
+std::unique_ptr<PrototypeAst> LogErrorP(std::string_view str);
 
 /// Get token precedence
 int GetTokPrecedence();

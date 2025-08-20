@@ -24,152 +24,191 @@
 // 全局变量和函数声明，用于管理 LLVM IR 生成和优化的核心组件。
 
 // LLVM 上下文对象，管理 LLVM 中的全局状态。
-std::unique_ptr<llvm::LLVMContext> TheContext;
+std::unique_ptr<llvm::LLVMContext> the_context;
 
 // LLVM 模块对象，表示一个独立的代码单元。
-std::unique_ptr<llvm::Module> TheModule;
+std::unique_ptr<llvm::Module> the_module;
 
 // LLVM IR 构建器，用于生成 LLVM 指令。
-std::unique_ptr<llvm::IRBuilder<> > Builder;
+std::unique_ptr<llvm::IRBuilder<> > builder;
 
 // 命名值映射，用于存储当前作用域中的变量及其对应的 LLVM 值。
-std::map<std::string, llvm::Value*> NamedValues;
+std::map<std::string, llvm::Value*> named_values;
 
 // 自定义的 Kaleidoscope JIT，用于即时编译和执行代码。
-std::unique_ptr<llvm::orc::KaleidoscopeJIT> TheJIT;
+std::unique_ptr<llvm::orc::KaleidoscopeJIT> the_jit;
 
 // 函数级别的 Pass 管理器，用于优化函数。
-std::unique_ptr<llvm::FunctionPassManager> TheFPM;
+std::unique_ptr<llvm::FunctionPassManager> the_fpm;
 
 // 循环分析管理器，用于管理循环级别的分析。
-std::unique_ptr<llvm::LoopAnalysisManager> TheLAM;
+std::unique_ptr<llvm::LoopAnalysisManager> the_lam;
 
 // 函数分析管理器，用于管理函数级别的分析。
-std::unique_ptr<llvm::FunctionAnalysisManager> TheFAM;
+std::unique_ptr<llvm::FunctionAnalysisManager> the_fam;
 
 // 调用图强连通分量分析管理器。
-std::unique_ptr<llvm::CGSCCAnalysisManager> TheCGAM;
+std::unique_ptr<llvm::CGSCCAnalysisManager> the_cgam;
 
 // 模块分析管理器，用于管理模块级别的分析。
-std::unique_ptr<llvm::ModuleAnalysisManager> TheMAM;
+std::unique_ptr<llvm::ModuleAnalysisManager> the_mam;
 
 // Pass 仪器回调，用于监控和调试 Pass 的执行。
-std::unique_ptr<llvm::PassInstrumentationCallbacks> ThePIC;
+std::unique_ptr<llvm::PassInstrumentationCallbacks> the_pic;
 
 // 标准仪器化工具，用于注册和管理 Pass 仪器。
-std::unique_ptr<llvm::StandardInstrumentations> TheSI;
+std::unique_ptr<llvm::StandardInstrumentations> the_si;
 
 // 函数原型的映射，用于存储已声明的函数。
-std::map<std::string, std::unique_ptr<PrototypeAST> > FunctionProtos;
-
-// 解析函数定义，返回一个包含 FunctionAST 的 std::expected。
-std::expected<std::unique_ptr<FunctionAST>, std::string_view> ParseDefinition();
-
-// 解析外部函数声明，返回一个包含 PrototypeAST 的 std::expected。
-std::expected<std::unique_ptr<PrototypeAST>, std::string_view> ParseExtern();
+std::map<std::string, std::unique_ptr<PrototypeAst> > function_protos;
 
 // 解析顶层表达式，返回一个 FunctionAST。
-std::unique_ptr<FunctionAST> ParseTopLevelExpr();
+std::unique_ptr<FunctionAST> parse_top_level_expr();
 
 // 函数原型的 AST 类的前向声明。
-class PrototypeAST;
+class PrototypeAst;
 
 // 全局错误处理器，用于处理 LLVM 中的错误。
-extern llvm::ExitOnError ExitOnErr;
+llvm::ExitOnError exit_on_err;
 
 // 获取下一个词法单元的函数。
-int getNextToken();
+int get_next_token();
 
-
+///
+/// InitializeModuleAndManagers - Initializes the LLVM module and various analysis managers.
+/// This function sets up the LLVM context, module, IR builder, and various pass managers.
+/// It also registers the necessary analysis passes and adds transform passes to the function pass manager.
+///
 void InitializeModuleAndManagers() {
   // Open a new context and module.
-  TheContext = std::make_unique<llvm::LLVMContext>();
-  TheModule = std::make_unique<llvm::Module>("KaleidoscopeJIT", *TheContext);
-  TheModule->setDataLayout(TheJIT->getDataLayout());
+  the_context = std::make_unique<llvm::LLVMContext>();
+  the_module = std::make_unique<llvm::Module>("KaleidoscopeJIT", *the_context);
+  the_module->setDataLayout(the_jit->getDataLayout());
 
   // Create a new builder for the module.
-  Builder = std::make_unique<llvm::IRBuilder<> >(*TheContext);
+  builder = std::make_unique<llvm::IRBuilder<> >(*the_context);
 
   // Create new pass and analysis managers.
-  TheFPM = std::make_unique<llvm::FunctionPassManager>();
-  TheLAM = std::make_unique<llvm::LoopAnalysisManager>();
-  TheFAM = std::make_unique<llvm::FunctionAnalysisManager>();
-  TheCGAM = std::make_unique<llvm::CGSCCAnalysisManager>();
-  TheMAM = std::make_unique<llvm::ModuleAnalysisManager>();
-  ThePIC = std::make_unique<llvm::PassInstrumentationCallbacks>();
-  TheSI = std::make_unique<llvm::StandardInstrumentations>(*TheContext,
+  the_fpm = std::make_unique<llvm::FunctionPassManager>();
+  the_lam = std::make_unique<llvm::LoopAnalysisManager>();
+  the_fam = std::make_unique<llvm::FunctionAnalysisManager>();
+  the_cgam = std::make_unique<llvm::CGSCCAnalysisManager>();
+  the_mam = std::make_unique<llvm::ModuleAnalysisManager>();
+
+  // Register the analysis passes.
+  the_pic = std::make_unique<llvm::PassInstrumentationCallbacks>();
+  the_si = std::make_unique<llvm::StandardInstrumentations>(*the_context,
     /*DebugLogging*/ true);
-  TheSI->registerCallbacks(*ThePIC, TheMAM.get());
+  the_si->registerCallbacks(*the_pic, the_mam.get());
+
+  // Add transform passes.
+  // Do simple "peephole" optimizations and bit-twiddling optzns.
+  the_fpm->addPass(InstCombinePass());
+  // Reassociate expressions.
+  the_fpm->addPass(ReassociatePass());
+  // Eliminate Common SubExpressions.
+  the_fpm->addPass(GVNPass());
+  // Simplify the control flow graph (deleting unreachable blocks, etc).
+  the_fpm->addPass(SimplifyCFGPass());
+
   // Register analysis passes used in these transform passes.
-  llvm::PassBuilder PB;
-  PB.registerModuleAnalyses(*TheMAM);
-  PB.registerFunctionAnalyses(*TheFAM);
-  PB.crossRegisterProxies(*TheLAM, *TheFAM, *TheCGAM, *TheMAM);
+  llvm::PassBuilder pb;
+  pb.registerModuleAnalyses(*the_mam);
+  pb.registerFunctionAnalyses(*the_fam);
+  pb.crossRegisterProxies(*the_lam, *the_fam, *the_cgam, *the_mam);
 }
 
+/// HandleDefinition - Handle function definitions.
+/// This function parses a function definition and adds it to the JIT.
 void HandleDefinition() {
-  auto FnResult = ParseDefinition();
-  if (FnResult) {
-    auto FnAST = std::move(*FnResult); // 提取 std::unique_ptr<FunctionAST>
-    if (auto* FnIR = FnAST->codegen()) {
+  if (auto fn_result = ParseDefinition()) {
+    const auto fn_ast = std::move(*fn_result); // 提取 std::unique_ptr<FunctionAST>
+    // 将函数原型添加到函数原型映射中
+    if (const auto* fn_ir = fn_ast->codegen()) {
       std::print(stderr, "Read function definition:");
-      FnIR->print(llvm::errs());
+      fn_ir->print(llvm::errs());
       std::println(stderr, "");
-      ExitOnErr(TheJIT->addModule(
-          llvm::orc::ThreadSafeModule(std::move(TheModule),
-                                      std::move(TheContext))));
+      exit_on_err(the_jit->addModule(
+          llvm::orc::ThreadSafeModule(std::move(the_module),
+                                      std::move(the_context))));
       InitializeModuleAndManagers();
     }
   } else {
     // 处理错误
-    std::print(stderr, "Error parsing definition: {}\n", FnResult.error());
-    getNextToken();
+    std::print(stderr, "Error parsing definition: {}\n", fn_result.error());
+    get_next_token();
   }
 }
 
+
+/// HandleExtern - Handle external declarations.
+/// This function parses an extern declaration and adds it to the function prototypes.
+/// It expects the extern to be in the form of`extern <name>(<args>)
 void HandleExtern() {
-  auto ProtoResult = ParseExtern();
-  if (ProtoResult) {
-    auto ProtoAST = std::move(*ProtoResult); // 提取 std::unique_ptr<PrototypeAST>
-    if (auto* FnIR = ProtoAST->codegen()) {
+  if (auto ProtoResult = ParseExtern()) {
+    auto proto_ast = std::move(*ProtoResult); // 提取 std::unique_ptr<PrototypeAST>
+    if (const auto* fn_ir = proto_ast->codegen()) {
       std::print(stderr, "Read extern: ");
-      FnIR->print(llvm::errs());
+      fn_ir->print(llvm::errs());
       std::println(stderr, "");
-      FunctionProtos[ProtoAST->GetName()] = std::move(ProtoAST);
+      function_protos[proto_ast->GetName()] = std::move(proto_ast);
     }
   } else {
     // 处理错误
     std::print(stderr, "Error parsing extern: {}\n", ProtoResult.error());
-    getNextToken();
+    get_next_token();
   }
 }
 
+/// HandleTopLevelExpression - Handle top-level expressions.
+/// This function parses a top-level expression and evaluates it as an
+/// anonymous function. It adds the function to the JIT and executes it.
 void HandleTopLevelExpression() {
   // Evaluate a top-level expression into an anonymous function.
-  if (auto FnAST = ParseTopLevelExpr()) {
+  if (auto FnAST = parse_top_level_expr()) {
     if (FnAST->codegen()) {
       // Create a ResourceTracker to track JIT'd memory allocated to our
       // anonymous expression -- that way we can free it after executing.
-      auto RT = TheJIT->getMainJITDylib().createResourceTracker();
+      const auto rt = the_jit->getMainJITDylib().createResourceTracker();
 
-      auto TSM = llvm::orc::ThreadSafeModule(std::move(TheModule),
-                                             std::move(TheContext));
-      ExitOnErr(TheJIT->addModule(std::move(TSM), RT));
-      InitializeModuleAndManagers();
+      // Create a new module for the anonymous expression.
+      auto tsm = llvm::orc::ThreadSafeModule(std::move(the_module),
+                                             std::move(the_context));
+      exit_on_err(the_jit->addModule(std::move(tsm), rt));
+      InitializeModuleAndManagers(); // 重新初始化模块和管理器
 
       // Search the JIT for the __anon_expr symbol.
-      auto ExprSymbol = ExitOnErr(TheJIT->lookup("__anon_expr"));
+      const auto expr_symbol = exit_on_err(the_jit->lookup("__anon_expr"));
 
       // Get the symbol's address and cast it to the right type (takes no
       // arguments, returns a double) so we can call it as a native function.
-      double (*FP)() = ExprSymbol.toPtr<double (*)()>();
-      std::println(stderr, "Evaluated to {}", FP());
+      const auto fp = expr_symbol.toPtr<double (*)()>();
+      std::println(stderr, "Evaluated to {}", fp());
 
       // Delete the anonymous expression module from the JIT.
-      ExitOnErr(RT->remove());
+      exit_on_err(rt->remove());
     }
   } else {
     // Skip token for error recovery.
-    getNextToken();
+    get_next_token();
   }
+}
+
+/// @brief Retrieves a function by name from the current module or function prototypes.
+/// @param name The name of the function to retrieve.
+/// @return  A pointer to the LLVM Function if it exists, or nullptr if it does not.
+llvm::Function* get_function(const std::string& name) {
+  // First, see if the function has already been added to the current module.
+  if (auto* F = the_module->getFunction(name)) {
+    return F;
+  }
+
+  // If not, check whether we can codegen the declaration from some existing
+  // prototype.
+  if (const auto fi = function_protos.find(name); fi != function_protos.end()) {
+    return fi->second->codegen();
+  }
+
+  // If no existing prototype exists, return null.
+  return nullptr;
 }
