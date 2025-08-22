@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 
+#include "Lexer.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Value.h"
@@ -20,6 +21,9 @@ extern std::unique_ptr<llvm::FunctionAnalysisManager> the_fam;
 extern std::map<std::string, std::unique_ptr<PrototypeAst> > function_protos;
 
 llvm::Function *get_function(std::string name);
+std::unique_ptr<ExprAST> ParseIfExpr();
+
+extern Token cur_tok;
 
 llvm::Value* LogErrorV(const char* Str) {
   LogError(Str);
@@ -171,4 +175,207 @@ llvm::Function* FunctionAST::codegen() {
   // Error reading body, remove function.
   the_function->eraseFromParent();
   return nullptr;
+}
+
+/// IfExprAST::codegen - Code generation for if expressions.
+/// This function generates LLVM IR for an if expression.
+/// It evaluates the condition, and based on the result, it generates code for
+/// the then and else branches. It uses basic blocks to handle the control flow.
+/// @return A pointer to the LLVM Value representing the result of the if expression,
+/// or nullptr on error.
+/// If the condition is true, it evaluates the then branch; otherwise, it evaluates the else
+/// branch. It uses PHI nodes to merge the results from both branches into a single value.
+llvm::Value* IfExprAST::codegen() {
+  llvm::Value *CondV = Cond->codegen();
+  if (!CondV)
+    return nullptr;
+
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  CondV = builder->CreateFCmpONE(
+      CondV, llvm::ConstantFP::get(*the_context, llvm::APFloat(0.0)), "ifcond");
+  llvm::Function *TheFunction = builder->GetInsertBlock()->getParent();
+
+  // Create blocks for the then and else cases.  Insert the 'then' block at the
+  // end of the function.
+  llvm::BasicBlock *ThenBB =
+      llvm::BasicBlock::Create(*the_context, "then", TheFunction);
+  llvm::BasicBlock *ElseBB = llvm::BasicBlock::Create(*the_context, "else");
+  llvm::BasicBlock *MergeBB = llvm::BasicBlock::Create(*the_context, "ifcont");
+
+  builder->CreateCondBr(CondV, ThenBB, ElseBB);
+  // Emit then value.
+  builder->SetInsertPoint(ThenBB);
+  // Codegen the 'then' value.
+  // The 'then' block is where we will insert the code for the 'then'
+  llvm::Value *ThenV = Then->codegen();
+  if (!ThenV) {
+    return nullptr;
+  }
+
+  builder->CreateBr(MergeBB);
+  // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
+  ThenBB = builder->GetInsertBlock();
+
+  // Now, we have to insert the 'else' block after the 'then' block.
+  // Emit else block.
+  TheFunction->insert(TheFunction->end(), ElseBB);
+  builder->SetInsertPoint(ElseBB);
+
+  llvm::Value *ElseV = Else->codegen();
+  if (!ElseV) {
+    return nullptr;
+  }
+
+  builder->CreateBr(MergeBB);
+  // codegen of 'Else' can change the current block, update ElseBB for the PHI.
+  ElseBB = builder->GetInsertBlock();
+
+  // Now we have to insert the merge block after the 'else' block.
+  // Emit merge block.
+  TheFunction->insert(TheFunction->end(), MergeBB);
+  builder->SetInsertPoint(MergeBB);
+  llvm::PHINode *PN =
+    builder->CreatePHI(llvm::Type::getDoubleTy(*the_context), 2, "iftmp");
+
+  PN->addIncoming(ThenV, ThenBB);
+  PN->addIncoming(ElseV, ElseBB);
+  return PN;
+}
+
+llvm::Value* ForExprAST::codegen() {
+  // Emit the start code first, without 'variable' in scope.
+  llvm::Value *StartVal = Start->codegen();
+  if (!StartVal)
+    return nullptr;
+  // Make the new basic block for the loop header, inserting after current
+  // block.
+  llvm::Function *TheFunction = builder->GetInsertBlock()->getParent();
+  llvm::BasicBlock *PreheaderBB = builder->GetInsertBlock();
+  llvm::BasicBlock *LoopBB =
+      llvm::BasicBlock::Create(*the_context, "loop", TheFunction);
+
+  // Insert an explicit fall through from the current block to the LoopBB.
+  builder->CreateBr(LoopBB);
+  // Start insertion in LoopBB.
+  builder->SetInsertPoint(LoopBB);
+
+  // Start the PHI node with an entry for Start.
+  llvm::PHINode *Variable = builder->CreatePHI(llvm::Type::getDoubleTy(*the_context),
+                                               2, VarName);
+  Variable->addIncoming(StartVal, PreheaderBB);
+  // Within the loop, the variable is defined equal to the PHI node.  If it
+  // shadows an existing variable, we have to restore it, so save it now.
+  llvm::Value *OldVal = named_values[VarName];
+  named_values[VarName] = Variable;
+
+  // Emit the body of the loop.  This, like any other expr, can change the
+  // current BB.  Note that we ignore the value computed by the body, but don't
+  // allow an error.
+  if (!Body->codegen())
+    return nullptr;
+  // Emit the step value.
+  llvm::Value *StepVal = nullptr;
+  if (Step) {
+    StepVal = Step->codegen();
+    if (!StepVal)
+      return nullptr;
+  } else {
+    // If not specified, use 1.0.
+    StepVal = llvm::ConstantFP::get(*the_context, llvm::APFloat(1.0));
+  }
+
+  llvm::Value *NextVar = builder->CreateFAdd(Variable, StepVal, "nextvar");
+  // Compute the end condition.
+  llvm::Value *EndCond = End->codegen();
+  if (!EndCond)
+    return nullptr;
+
+  // Convert condition to a bool by comparing non-equal to 0.0.
+  EndCond = builder->CreateFCmpONE(
+      EndCond, llvm::ConstantFP::get(*the_context, llvm::APFloat(0.0)), "loopcond");
+  // Create the "after loop" block and insert it.
+  llvm::BasicBlock *LoopEndBB = builder->GetInsertBlock();
+  llvm::BasicBlock *AfterBB =
+      llvm::BasicBlock::Create(*the_context, "afterloop", TheFunction);
+
+  // Insert the conditional branch into the end of LoopEndBB.
+  builder->CreateCondBr(EndCond, LoopBB, AfterBB);
+
+  // Any new code will be inserted in AfterBB.
+  builder->SetInsertPoint(AfterBB);  // Add a new entry to the PHI node for the backedge.
+  Variable->addIncoming(NextVar, LoopEndBB);
+
+  // Restore the unshadowed variable.
+  if (OldVal)
+    named_values[VarName] = OldVal;
+  else
+    named_values.erase(VarName);
+
+  // for expr always returns 0.0.
+  return llvm::Constant::getNullValue(llvm::Type::getDoubleTy(*the_context));
+}
+
+/// forexpr ::= 'for' identifier '=' expr ',' expr (',' expr)? 'in' expression
+static std::unique_ptr<ExprAST> ParseForExpr() {
+  get_next_token();  // eat the for.
+
+  if (cur_tok != Token::kTokIdentifier)
+    return LogError("expected identifier after for");
+
+  std::string IdName = identifier_str;
+  get_next_token();  // eat identifier.
+
+  if (cur_tok != '=')
+    return LogError("expected '=' after for");
+  get_next_token();  // eat '='.
+
+
+  auto Start = ParseExpression();
+  if (!Start)
+    return nullptr;
+  if (cur_tok != ',')
+    return LogError("expected ',' after for start value");
+  get_next_token();
+
+  auto End = ParseExpression();
+  if (!End)
+    return nullptr;
+
+  // The step value is optional.
+  std::unique_ptr<ExprAST> Step;
+  if (cur_tok == ',') {
+    get_next_token();
+    Step = ParseExpression();
+    if (!Step)
+      return nullptr;
+  }
+
+  if (cur_tok != Token::kTokIn)
+    return LogError("expected 'in' after for");
+  get_next_token();  // eat 'in'.
+
+  auto Body = ParseExpression();
+  if (!Body)
+    return nullptr;
+
+  return std::make_unique<ForExprAST>(IdName, std::move(Start),
+                                       std::move(End), std::move(Step),
+                                       std::move(Body));
+}
+
+static std::unique_ptr<ExprAST> ParsePrimary() {
+  switch (cur_tok) {
+    default:
+      return LogError("unknown token when expecting an expression");
+    case Token::kTokIdentifier:
+      return ParseIdentifierExpr();
+    case Token::kTokNumber:
+      return ParseNumberExpr();
+    case '(':
+      return ParseParenExpr();
+    case Token::kTokIf:
+      return ParseIfExpr();
+    case Token::kTokFor:
+      return ParseForExpr();
+  }
 }

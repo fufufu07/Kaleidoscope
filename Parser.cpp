@@ -8,6 +8,7 @@
 /// BinopPrecedence - This holds the precedence for each binary operator that is
 /// defined.
 static std::map<Token, int> binop_precedence{};
+std::unique_ptr<ExprAST> ParseIfExpr();
 
 /// LogError* - These are little helper functions for error handling.
 std::unique_ptr<ExprAST> LogError(std::string_view str) {
@@ -97,10 +98,9 @@ std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   return std::make_unique<CallExprAST>(std::move(id_name), std::move(args));
 }
 
-/// primary
-///   ::= identifierexpr
-///   ::= numberexpr
-///   ::= parenexpr
+/// ParsePrimary - This function handles primary expressions, which can be
+/// identifiers, numbers, or parenthesized expressions.
+/// @return A unique pointer to the parsed expression AST, or nullptr on error.
 std::unique_ptr<ExprAST> ParsePrimary() {
   switch (get_current_token()) {
     case Token::kTokIdentifier:
@@ -109,6 +109,8 @@ std::unique_ptr<ExprAST> ParsePrimary() {
       return ParseNumberExpr();
     case static_cast<Token>('('):
       return ParseParenExpr();
+    case Token::kTokIf:
+      return ParseIfExpr();
     default:
       return LogError("unknown token when expecting an expression");
   }

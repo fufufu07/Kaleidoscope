@@ -20,4 +20,10 @@ enum class Token : int32_t {
   // operators
   kTokLParen = '(',
   kTokRParen = ')',
+  //control
+  kTokIf = -7,
+  kTokThen = -9,
+  kTokElse = -8,
+  kTokFor = -10,
+  kTokIn = -11
 };

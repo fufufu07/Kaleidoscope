@@ -16,7 +16,7 @@ static const std::unordered_map<std::string, Token> kKeywords = {
     {"def", Token::kTokDef}, {"extern", Token::kTokExtern}};
 
 // Current token
-static Token cur_tok;
+Token cur_tok;
 
 static void SkipWhitespace(int& last_char) noexcept {
   while (std::isspace(last_char)) {
