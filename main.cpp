@@ -47,15 +47,15 @@ static void MainLoop() {
   while (true) {
     std::print(stderr, "ready> ");
     switch (get_current_token()) {
-      case Token::kTokEof:
+      case Token::k_tok_eof:
         return;
       case static_cast<Token>(';'):  // ignore top-level semicolons.
         get_next_token();
         break;
-      case Token::kTokDef:
+      case Token::k_tok_def:
         HandleDefinition();
         break;
-      case Token::kTokExtern:
+      case Token::k_tok_extern:
         HandleExtern();
         break;
       default:

@@ -5,25 +5,28 @@
 /// The lexer returns tokens [0-255] if it is an unknown character, otherwise one
 /// of these for known things.
 enum class Token : int32_t {
-  kTokEof = -1,
+  k_tok_eof = -1,
 
   // commands
-  kTokDef = -2,
-  kTokExtern = -3,
+  k_tok_def = -2,
+  k_tok_extern = -3,
 
   // primary
-  kTokIdentifier = -4,
-  kTokNumber = -5,
+  k_tok_identifier = -4,
+  k_tok_number = -5,
 
   // error handling
-  kTokError = -6,
+  k_tok_error = -6,
   // operators
-  kTokLParen = '(',
-  kTokRParen = ')',
+  k_tok_l_paren = '(',
+  k_tok_r_paren = ')',
   //control
-  kTokIf = -7,
-  kTokThen = -9,
-  kTokElse = -8,
-  kTokFor = -10,
-  kTokIn = -11
+  k_tok_if = -7,
+  k_tok_then = -9,
+  k_tok_else = -8,
+  k_tok_for = -10,
+  k_tok_in = -11,
+
+  k_tok_binary = -12,
+  k_tok_unary = -13
 };

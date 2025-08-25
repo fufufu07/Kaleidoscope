@@ -7,13 +7,13 @@
 #include <unordered_map>
 
 // Global lexer state
-std::string identifier_str;  // Filled in if tok_identifier
-double num_val;              // Filled in if tok_number
-int line_num = 1;            // Track line numbers for error reporting
+std::string identifier_str; // Filled in if tok_identifier
+double num_val;             // Filled in if tok_number
+int line_num = 1;           // Track line numbers for error reporting
 
 // Cache for keywords to avoid string comparisons
 static const std::unordered_map<std::string, Token> kKeywords = {
-    {"def", Token::kTokDef}, {"extern", Token::kTokExtern}};
+    {"def", Token::k_tok_def}, {"extern", Token::k_tok_extern}};
 
 // Current token
 Token cur_tok;
@@ -39,7 +39,7 @@ static Token ParseIdentifier(int& last_char) {
   if (const auto it = kKeywords.find(identifier_str); it != kKeywords.end()) {
     return it->second;
   }
-  return Token::kTokIdentifier;
+  return Token::k_tok_identifier;
 }
 
 static Token ParseNumber(int& last_char) {
@@ -53,7 +53,7 @@ static Token ParseNumber(int& last_char) {
         // 当前正在解析的数字已经包含小数点
         std::println(stderr, "Error: Invalid number format at line {}",
                      line_num);
-        return Token::kTokError;
+        return Token::k_tok_error;
       }
       has_decimal_point = true;
     }
@@ -70,10 +70,10 @@ static Token ParseNumber(int& last_char) {
 
   if (*end_ptr != '\0') {
     std::println(stderr, "Error: Invalid number format at line {}", line_num);
-    return Token::kTokError;
+    return Token::k_tok_error;
   }
 
-  return Token::kTokNumber;
+  return Token::k_tok_number;
 }
 
 static bool SkipComment(int& last_char) noexcept {
@@ -91,31 +91,80 @@ static bool SkipComment(int& last_char) noexcept {
 Token get_tok() {
   static int last_char = ' ';
 
-  SkipWhitespace(last_char);
-
-  if (std::isalpha(last_char) || last_char == '_') {
-    return ParseIdentifier(last_char);
+  // Skip any whitespace.
+  while (isspace(last_char)) {
+    last_char = getchar();
   }
 
-  if (std::isdigit(last_char) || last_char == '.') {
-    return ParseNumber(last_char);
+  if (isalpha(last_char)) {
+    // identifier: [a-zA-Z][a-zA-Z0-9]*
+    identifier_str = last_char;
+    while (isalnum((last_char = getchar())))
+      identifier_str += last_char;
+
+    if (identifier_str == "def") {
+      return Token::k_tok_def;
+    }
+    if (identifier_str == "extern") {
+      return Token::k_tok_extern;
+    }
+    if (identifier_str == "if") {
+      return Token::k_tok_if;
+    }
+    if (identifier_str == "then") {
+      return Token::k_tok_then;
+    }
+    if (identifier_str == "else") {
+      return Token::k_tok_else;
+    }
+    if (identifier_str == "for") {
+      return Token::k_tok_for;
+    }
+    if (identifier_str == "in") {
+      return Token::k_tok_in;
+    }
+    if (identifier_str == "binary") {
+      return Token::k_tok_binary;
+    }
+    if (identifier_str == "unary") {
+      return Token::k_tok_unary;
+    }
+    return Token::k_tok_identifier;
+  }
+  if (isdigit(last_char) || last_char == '.') {
+    // Number: [0-9.]+
+    std::string NumStr;
+    do {
+      NumStr += last_char;
+      last_char = getchar();
+    } while (isdigit(last_char) || last_char == '.');
+
+    num_val = strtod(NumStr.c_str(), nullptr);
+    return Token::k_tok_number;
   }
 
   if (last_char == '#') {
-    if (SkipComment(last_char)) {
-      // 如果已处理完注释且未到文件末尾，则递归继续处理
+    // Comment until end of line.
+    do {
+      last_char = getchar();
+    } while (last_char != EOF && last_char != '\n' && last_char != '\r');
+
+    if (last_char != EOF) {
       return get_tok();
     }
   }
 
-  if (last_char == EOF) {
-    return Token::kTokEof;
-  }
+  // Check for end of file.  Don't eat the EOF.
+  if (last_char == EOF)
+    return Token::k_tok_eof;
 
-  const int this_char = last_char;
-  last_char = std::cin.get();
-  return static_cast<Token>(this_char);
+  // Otherwise, just return the character as its ascii value.
+  int ThisChar = last_char;
+  last_char = getchar();
+  return static_cast<Token>(ThisChar);
 }
+
+
 
 Token get_next_token() {
   return cur_tok = get_tok();

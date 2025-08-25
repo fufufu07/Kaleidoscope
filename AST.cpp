@@ -22,8 +22,10 @@ extern std::map<std::string, std::unique_ptr<PrototypeAst> > function_protos;
 
 llvm::Function *get_function(std::string name);
 std::unique_ptr<ExprAST> ParseIfExpr();
+std::unique_ptr<ExprAST> ParseForExpr();
 
 extern Token cur_tok;
+extern std::map<Token, int> binop_precedence;
 
 llvm::Value* LogErrorV(const char* Str) {
   LogError(Str);
@@ -66,8 +68,15 @@ llvm::Value* BinaryExprAST::codegen() {
       return builder->CreateUIToFP(l, llvm::Type::getDoubleTy(*the_context),
                                    "booltmp");
     default:
-      return LogErrorV("invalid binary operator");
+      break;
   }
+  // If it wasn't a builtin binary operator, it must be a user defined one. Emit
+  // a call to it.
+  llvm::Function *F = get_function(std::string("binary") + std::to_string(static_cast<int32_t>(op_)));
+  assert(F && "binary operator not found!");
+
+  llvm::Value *Ops[2] = { l, r };
+  return builder->CreateCall(F, Ops, "binop");
 }
 
 /// CallExprAST::codegen - Code generation for function calls.
@@ -148,6 +157,10 @@ llvm::Function* FunctionAST::codegen() {
   if (!the_function) {
     return nullptr;
   }
+
+  // If this is an operator, install it.
+  if (p.is_binary_op())
+    binop_precedence[static_cast<Token>(p.get_operator_name())] = p.get_binary_precedence();
 
   // Create a new basic block to start insertion into.
   llvm::BasicBlock *bb = llvm::BasicBlock::Create(*the_context, "entry", the_function);
@@ -242,6 +255,12 @@ llvm::Value* IfExprAST::codegen() {
   return PN;
 }
 
+/// ForExprAST::codegen - Code generation for for/in expressions.
+/// This function generates LLVM IR for a for loop expression.
+/// It sets up the loop variable, start, end, and step expressions,
+/// and generates the loop body. It uses basic blocks to handle the loop control flow.
+/// @return A pointer to the LLVM Value representing the result of the for expression,
+/// or nullptr on error.
 llvm::Value* ForExprAST::codegen() {
   // Emit the start code first, without 'variable' in scope.
   llvm::Value *StartVal = Start->codegen();
@@ -277,8 +296,9 @@ llvm::Value* ForExprAST::codegen() {
   llvm::Value *StepVal = nullptr;
   if (Step) {
     StepVal = Step->codegen();
-    if (!StepVal)
+    if (!StepVal) {
       return nullptr;
+    }
   } else {
     // If not specified, use 1.0.
     StepVal = llvm::ConstantFP::get(*the_context, llvm::APFloat(1.0));
@@ -287,8 +307,9 @@ llvm::Value* ForExprAST::codegen() {
   llvm::Value *NextVar = builder->CreateFAdd(Variable, StepVal, "nextvar");
   // Compute the end condition.
   llvm::Value *EndCond = End->codegen();
-  if (!EndCond)
+  if (!EndCond) {
     return nullptr;
+  }
 
   // Convert condition to a bool by comparing non-equal to 0.0.
   EndCond = builder->CreateFCmpONE(
@@ -306,76 +327,42 @@ llvm::Value* ForExprAST::codegen() {
   Variable->addIncoming(NextVar, LoopEndBB);
 
   // Restore the unshadowed variable.
-  if (OldVal)
+  if (OldVal) {
     named_values[VarName] = OldVal;
-  else
+  } else {
     named_values.erase(VarName);
+  }
 
   // for expr always returns 0.0.
   return llvm::Constant::getNullValue(llvm::Type::getDoubleTy(*the_context));
 }
 
-/// forexpr ::= 'for' identifier '=' expr ',' expr (',' expr)? 'in' expression
-static std::unique_ptr<ExprAST> ParseForExpr() {
-  get_next_token();  // eat the for.
-
-  if (cur_tok != Token::kTokIdentifier)
-    return LogError("expected identifier after for");
-
-  std::string IdName = identifier_str;
-  get_next_token();  // eat identifier.
-
-  if (cur_tok != '=')
-    return LogError("expected '=' after for");
-  get_next_token();  // eat '='.
-
-
-  auto Start = ParseExpression();
-  if (!Start)
-    return nullptr;
-  if (cur_tok != ',')
-    return LogError("expected ',' after for start value");
-  get_next_token();
-
-  auto End = ParseExpression();
-  if (!End)
+llvm::Value* UnaryExprAST::codegen() {
+  llvm::Value *OperandV = Operand->codegen();
+  if (!OperandV)
     return nullptr;
 
-  // The step value is optional.
-  std::unique_ptr<ExprAST> Step;
-  if (cur_tok == ',') {
-    get_next_token();
-    Step = ParseExpression();
-    if (!Step)
-      return nullptr;
-  }
+  llvm::Function *f = get_function(std::string("unary") + Opcode);
+  if (!f)
+    return LogErrorV("Unknown unary operator");
 
-  if (cur_tok != Token::kTokIn)
-    return LogError("expected 'in' after for");
-  get_next_token();  // eat 'in'.
+  return builder->CreateCall(f, OperandV, "unop");
 
-  auto Body = ParseExpression();
-  if (!Body)
-    return nullptr;
-
-  return std::make_unique<ForExprAST>(IdName, std::move(Start),
-                                       std::move(End), std::move(Step),
-                                       std::move(Body));
 }
 
 static std::unique_ptr<ExprAST> ParsePrimary() {
   switch (cur_tok) {
     default:
       return LogError("unknown token when expecting an expression");
-    case Token::kTokIdentifier:
+    case Token::k_tok_identifier:
       return ParseIdentifierExpr();
-    case Token::kTokNumber:
+    case Token::k_tok_number:
       return ParseNumberExpr();
     case '(':
       return ParseParenExpr();
-    case Token::kTokIf:
+    case Token::k_tok_if:
       return ParseIfExpr();
-    case Token::kTokFor:
+    case Token::k_tok_for:
       return ParseForExpr();
   }
 }

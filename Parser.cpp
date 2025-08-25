@@ -5,10 +5,14 @@
 
 #include "Lexer.h"
 
+extern Token cur_tok;
+
 /// BinopPrecedence - This holds the precedence for each binary operator that is
 /// defined.
-static std::map<Token, int> binop_precedence{};
+std::map<Token, int> binop_precedence{};
 std::unique_ptr<ExprAST> ParseIfExpr();
+
+std::unique_ptr<ExprAST> ParseUnary();
 
 /// LogError* - These are little helper functions for error handling.
 std::unique_ptr<ExprAST> LogError(std::string_view str) {
@@ -103,13 +107,13 @@ std::unique_ptr<ExprAST> ParseIdentifierExpr() {
 /// @return A unique pointer to the parsed expression AST, or nullptr on error.
 std::unique_ptr<ExprAST> ParsePrimary() {
   switch (get_current_token()) {
-    case Token::kTokIdentifier:
+    case Token::k_tok_identifier:
       return ParseIdentifierExpr();
-    case Token::kTokNumber:
+    case Token::k_tok_number:
       return ParseNumberExpr();
     case static_cast<Token>('('):
       return ParseParenExpr();
-    case Token::kTokIf:
+    case Token::k_tok_if:
       return ParseIfExpr();
     default:
       return LogError("unknown token when expecting an expression");
@@ -135,7 +139,7 @@ std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
     get_next_token();  // eat binop
 
     // Parse the primary expression after the binary operator.
-    auto rhs{ParsePrimary()};
+    auto rhs{ParseUnary()};
     if (!rhs) {
       return nullptr;
     }
@@ -158,7 +162,7 @@ std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 ///   ::= primary binoprhs
 ///
 std::unique_ptr<ExprAST> ParseExpression() {
-  auto LHS = ParsePrimary();
+  auto LHS = ParseUnary();
   if (!LHS) return nullptr;
 
   return ParseBinOpRHS(0, std::move(LHS));
@@ -167,33 +171,57 @@ std::unique_ptr<ExprAST> ParseExpression() {
 /// prototype
 ///   ::= id '(' id* ')'
 std::unique_ptr<PrototypeAst> ParsePrototype() {
-  // 使用结构化绑定和期望类型
-  if (get_current_token() != Token::kTokIdentifier) [[unlikely]] {
-    return LogErrorP("Expected function name in prototype");
+  std::string FnName;
+
+  unsigned Kind = 0;  // 0 = identifier, 1 = unary, 2 = binary.
+  unsigned BinaryPrecedence = 30;
+
+  switch (cur_tok) {
+    default:
+      return LogErrorP("Expected function name in prototype");
+    case Token::k_tok_identifier:
+      FnName = identifier_str;
+      Kind = 0;
+      get_next_token();
+      break;
+    case Token::k_tok_binary:
+      get_next_token();
+      if (!isascii(cur_tok)) {
+        return LogErrorP("Expected binary operator");
+      }
+      FnName = "binary";
+      FnName += static_cast<char>(cur_tok);
+      Kind = 2;
+      get_next_token();
+
+      // Read the precedence if present.
+      if (cur_tok == Token::k_tok_number) {
+        if (num_val < 1 || num_val > 100)
+          return LogErrorP("Invalid precedence: must be 1..100");
+        BinaryPrecedence = static_cast<unsigned>(num_val);
+        get_next_token();
+      }
+      break;
   }
 
-  auto fn_name = std::string{identifier_str};
-  get_next_token();
-
-  if (get_current_token() != Token::kTokLParen) [[unlikely]] {
+  if (cur_tok == Token::k_tok_number)
     return LogErrorP("Expected '(' in prototype");
-  }
 
-  // 可以考虑预留空间
-  std::vector<std::string> arg_names;
-  arg_names.reserve(8);  // 大多数函数参数不会超过8个
-
-  while (get_next_token() == Token::kTokIdentifier) {
-    arg_names.emplace_back(identifier_str);
-  }
-
-  if (get_current_token() != Token::kTokRParen) [[unlikely]] {
+  std::vector<std::string> ArgNames;
+  while (get_next_token() == Token::k_tok_identifier)
+    ArgNames.push_back(identifier_str);
+  if (cur_tok == Token::k_tok_number)
     return LogErrorP("Expected ')' in prototype");
-  }
 
-  get_next_token();
-  return std::make_unique<PrototypeAst>(std::move(fn_name),
-                                        std::move(arg_names));
+  // success.
+  get_next_token();  // eat ')'.
+
+  // Verify right number of names for operator.
+  if (Kind && ArgNames.size() != Kind)
+    return LogErrorP("Invalid number of operands for operator");
+
+  return std::make_unique<PrototypeAst>(FnName, std::move(ArgNames), Kind != 0,
+                                         BinaryPrecedence);
 }
 
 /// definition ::= 'def' prototype expression
@@ -232,7 +260,8 @@ template <typename ExprType>
 std::unique_ptr<FunctionAST> WrapAsTopLevel(
     std::unique_ptr<ExprType> expr) {
   auto proto =
-      std::make_unique<PrototypeAst>("__anon_expr", std::vector<std::string>{});
+      std::make_unique<PrototypeAst>("__anon_expr", std::vector<std::string>{}, false,
+                                     0);
   return std::make_unique<FunctionAST>(std::move(proto), std::move(expr));
 }
 
@@ -247,4 +276,21 @@ void InitializeBinopPrecedence() {
   binop_precedence[static_cast<Token>('+')] = 20;
   binop_precedence[static_cast<Token>('-')] = 20;
   binop_precedence[static_cast<Token>('*')] = 40;  // highest.
+}
+
+/// unary
+///   ::= primary
+///   ::= '!' unary
+static std::unique_ptr<ExprAST> ParseUnary() {
+  // If the current token is not an operator, it must be a primary expr.
+  if (!isascii(cur_tok) || cur_tok == static_cast<Token>('(') ||
+      cur_tok == Token::k_tok_identifier || cur_tok == Token::k_tok_number)
+    return ParsePrimary();
+
+  // If this is a unary operator, read it.
+  int Opc = static_cast<int>(cur_tok);
+  get_next_token();
+  if (auto Operand = ParseUnary())
+    return std::make_unique<UnaryExprAST>(Opc, std::move(Operand));
+  return nullptr;
 }
