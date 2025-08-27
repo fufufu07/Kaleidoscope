@@ -102,6 +102,8 @@ void InitializeModuleAndManagers() {
   the_si->registerCallbacks(*the_pic, the_mam.get());
 
   // Add transform passes.
+  // Promote allocas to registers.
+  the_fpm->addPass(PromotePass());
   // Do simple "peephole" optimizations and bit-twiddling optzns.
   the_fpm->addPass(InstCombinePass());
   // Reassociate expressions.

@@ -170,8 +170,11 @@ std::unique_ptr<ExprAST> ParseExpression() {
 
 /// prototype
 ///   ::= id '(' id* ')'
+///   ::= binary LETTER number? '(' id id ')'
+///   ::= unary LETTER '(' id ')'
+/// @return A unique pointer to the parsed PrototypeAst, or nullptr on error.
 std::unique_ptr<PrototypeAst> ParsePrototype() {
-  std::string FnName;
+  std::string fn_name;
 
   unsigned Kind = 0;  // 0 = identifier, 1 = unary, 2 = binary.
   unsigned BinaryPrecedence = 30;
@@ -180,7 +183,7 @@ std::unique_ptr<PrototypeAst> ParsePrototype() {
     default:
       return LogErrorP("Expected function name in prototype");
     case Token::k_tok_identifier:
-      FnName = identifier_str;
+      fn_name = identifier_str;
       Kind = 0;
       get_next_token();
       break;
@@ -189,39 +192,43 @@ std::unique_ptr<PrototypeAst> ParsePrototype() {
       if (!isascii(cur_tok)) {
         return LogErrorP("Expected binary operator");
       }
-      FnName = "binary";
-      FnName += static_cast<char>(cur_tok);
+      fn_name = "binary";
+      fn_name += static_cast<char>(cur_tok);
       Kind = 2;
       get_next_token();
 
       // Read the precedence if present.
       if (cur_tok == Token::k_tok_number) {
-        if (num_val < 1 || num_val > 100)
+        if (num_val < 1 || num_val > 100) {
           return LogErrorP("Invalid precedence: must be 1..100");
+        }
         BinaryPrecedence = static_cast<unsigned>(num_val);
         get_next_token();
       }
       break;
   }
 
-  if (cur_tok == Token::k_tok_number)
+  if (cur_tok == Token::k_tok_number) {
     return LogErrorP("Expected '(' in prototype");
+  }
 
   std::vector<std::string> ArgNames;
   while (get_next_token() == Token::k_tok_identifier)
     ArgNames.push_back(identifier_str);
-  if (cur_tok == Token::k_tok_number)
+  if (cur_tok == Token::k_tok_number) {
     return LogErrorP("Expected ')' in prototype");
+  }
 
   // success.
   get_next_token();  // eat ')'.
 
   // Verify right number of names for operator.
-  if (Kind && ArgNames.size() != Kind)
+  if (Kind && ArgNames.size() != Kind) {
     return LogErrorP("Invalid number of operands for operator");
+  }
 
-  return std::make_unique<PrototypeAst>(FnName, std::move(ArgNames), Kind != 0,
-                                         BinaryPrecedence);
+  return std::make_unique<PrototypeAst>(fn_name, std::move(ArgNames), Kind != 0,
+                                        BinaryPrecedence);
 }
 
 /// definition ::= 'def' prototype expression
@@ -272,6 +279,7 @@ template std::unique_ptr<FunctionAST> WrapAsTopLevel<ExprAST>(std::unique_ptr<Ex
 void InitializeBinopPrecedence() {
   // Install standard binary operators.
   // 1 is lowest precedence.
+  binop_precedence[static_cast<Token>('=')] = 2;
   binop_precedence[static_cast<Token>('<')] = 10;
   binop_precedence[static_cast<Token>('+')] = 20;
   binop_precedence[static_cast<Token>('-')] = 20;

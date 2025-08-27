@@ -15,7 +15,7 @@
 extern std::unique_ptr<llvm::LLVMContext> the_context;
 extern std::unique_ptr<llvm::Module> the_module;
 extern std::unique_ptr<llvm::IRBuilder<> > builder;
-extern std::map<std::string, llvm::Value*> named_values;
+extern std::map<std::string, llvm::AllocaInst*> named_values;
 extern std::unique_ptr<llvm::FunctionPassManager> the_fpm;
 extern std::unique_ptr<llvm::FunctionAnalysisManager> the_fam;
 extern std::map<std::string, std::unique_ptr<PrototypeAst> > function_protos;
@@ -23,6 +23,8 @@ extern std::map<std::string, std::unique_ptr<PrototypeAst> > function_protos;
 llvm::Function *get_function(std::string name);
 std::unique_ptr<ExprAST> ParseIfExpr();
 std::unique_ptr<ExprAST> ParseForExpr();
+llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Function *TheFunction,
+                                                llvm::StringRef VarName);
 
 extern Token cur_tok;
 extern std::map<Token, int> binop_precedence;
@@ -41,41 +43,69 @@ llvm::Value* NumberExprAST::codegen() {
 /// @return A pointer to the LLVM Value representing the variable, or nullptr on error.
 llvm::Value* VariableExprAST::codegen() {
   // Look this variable up in the function.
-  llvm::Value* v = named_values[name_]; // 查找变量名对应的 LLVM Value
-  if (!v)
+  llvm::AllocaInst* A = named_values[name_]; // 查找变量名对应的 LLVM Value
+  if (!A) {
     LogErrorV("Unknown variable name");
-  return v;
+  }
+  // Load the value.
+  return builder->CreateLoad(A->getAllocatedType(), A, name_.c_str());
 }
 
 /// BinaryExprAST::codegen - Code generation for binary expressions.
 /// @return A pointer to the LLVM Value representing the result of the binary operation, or nullptr on error.
 llvm::Value* BinaryExprAST::codegen() {
-  llvm::Value* l = lhs_->codegen();
-  llvm::Value* r = rhs_->codegen();
-  if (!l || !r)
+  // Special case '=' because we don't want to emit the LHS as an expression.
+  if (op_ == static_cast<Token>('=')) {
+    // Assignment requires the LHS to be an identifier.
+    // This assume we're building without RTTI because LLVM builds that way by
+    // default.  If you build LLVM with RTTI this can be changed to a
+    // dynamic_cast for automatic error checking.
+    auto *LHSE = static_cast<VariableExprAST *>(lhs_.get());
+    if (!LHSE) {
+      return LogErrorV("destination of '=' must be a variable");
+    }
+    // Codegen the RHS.
+    llvm::Value *Val = rhs_->codegen();
+    if (!Val) {
+      return nullptr;
+    }
+
+    // Look up the name.
+    llvm::Value *Variable = named_values[LHSE->GetName()];
+    if (!Variable) {
+      return LogErrorV("Unknown variable name");
+    }
+
+    builder->CreateStore(Val, Variable);
+    return Val;
+  }
+
+  llvm::Value *L = lhs_->codegen();
+  llvm::Value *R = rhs_->codegen();
+  if (!L || !R)
     return nullptr;
 
   switch (op_) {
     case '+':
-      return builder->CreateFAdd(l, r, "addtmp");
+      return builder->CreateFAdd(L, R, "addtmp");
     case '-':
-      return builder->CreateFSub(l, r, "subtmp");
+      return builder->CreateFSub(L, R, "subtmp");
     case '*':
-      return builder->CreateFMul(l, r, "multmp");
+      return builder->CreateFMul(L, R, "multmp");
     case '<':
-      l = builder->CreateFCmpULT(l, r, "cmptmp");
+      L = builder->CreateFCmpULT(L, R, "cmptmp");
       // Convert bool 0/1 to double 0.0 or 1.0
-      return builder->CreateUIToFP(l, llvm::Type::getDoubleTy(*the_context),
-                                   "booltmp");
+      return builder->CreateUIToFP(L, llvm::Type::getDoubleTy(*the_context), "booltmp");
     default:
       break;
   }
+
   // If it wasn't a builtin binary operator, it must be a user defined one. Emit
   // a call to it.
-  llvm::Function *F = get_function(std::string("binary") + std::to_string(static_cast<int32_t>(op_)));
+  llvm::Function *F = get_function(std::string("binary") + std::to_string(static_cast<int>(op_)));
   assert(F && "binary operator not found!");
 
-  llvm::Value *Ops[2] = { l, r };
+  llvm::Value *Ops[] = {L, R};
   return builder->CreateCall(F, Ops, "binop");
 }
 
@@ -168,8 +198,15 @@ llvm::Function* FunctionAST::codegen() {
 
   // Record the function arguments in the NamedValues map.
   named_values.clear();
-  for (auto &arg : the_function->args()) {
-    named_values[std::string(arg.getName())] = &arg;
+  for (auto &Arg : the_function->args()) {
+    // Create an alloca for this variable.
+    llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(the_function, Arg.getName());
+
+    // Store the initial value into the alloca.
+    builder->CreateStore(&Arg, Alloca);
+
+    // Add arguments to variable symbol table.
+    named_values[std::string(Arg.getName())] = Alloca;
   }
 
   if (llvm::Value *ret_val = body_->codegen()) {
@@ -262,79 +299,85 @@ llvm::Value* IfExprAST::codegen() {
 /// @return A pointer to the LLVM Value representing the result of the for expression,
 /// or nullptr on error.
 llvm::Value* ForExprAST::codegen() {
+  llvm::Function *TheFunction = builder->GetInsertBlock()->getParent();
+
+  // Create an alloca for the variable in the entry block.
+  llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, VarName);
+
   // Emit the start code first, without 'variable' in scope.
   llvm::Value *StartVal = Start->codegen();
   if (!StartVal)
     return nullptr;
+
+  // Store the value into the alloca.
+  builder->CreateStore(StartVal, Alloca);
+
   // Make the new basic block for the loop header, inserting after current
   // block.
-  llvm::Function *TheFunction = builder->GetInsertBlock()->getParent();
-  llvm::BasicBlock *PreheaderBB = builder->GetInsertBlock();
-  llvm::BasicBlock *LoopBB =
-      llvm::BasicBlock::Create(*the_context, "loop", TheFunction);
+llvm::BasicBlock *LoopBB = llvm::BasicBlock::Create(*the_context, "loop", TheFunction);
 
   // Insert an explicit fall through from the current block to the LoopBB.
   builder->CreateBr(LoopBB);
+
   // Start insertion in LoopBB.
   builder->SetInsertPoint(LoopBB);
 
-  // Start the PHI node with an entry for Start.
-  llvm::PHINode *Variable = builder->CreatePHI(llvm::Type::getDoubleTy(*the_context),
-                                               2, VarName);
-  Variable->addIncoming(StartVal, PreheaderBB);
   // Within the loop, the variable is defined equal to the PHI node.  If it
   // shadows an existing variable, we have to restore it, so save it now.
-  llvm::Value *OldVal = named_values[VarName];
-  named_values[VarName] = Variable;
+llvm::AllocaInst *OldVal = named_values[VarName];
+  named_values[VarName] = Alloca;
 
   // Emit the body of the loop.  This, like any other expr, can change the
   // current BB.  Note that we ignore the value computed by the body, but don't
   // allow an error.
   if (!Body->codegen())
     return nullptr;
+
   // Emit the step value.
-  llvm::Value *StepVal = nullptr;
+llvm::Value *StepVal = nullptr;
   if (Step) {
     StepVal = Step->codegen();
-    if (!StepVal) {
+    if (!StepVal)
       return nullptr;
-    }
   } else {
     // If not specified, use 1.0.
     StepVal = llvm::ConstantFP::get(*the_context, llvm::APFloat(1.0));
   }
 
-  llvm::Value *NextVar = builder->CreateFAdd(Variable, StepVal, "nextvar");
   // Compute the end condition.
-  llvm::Value *EndCond = End->codegen();
-  if (!EndCond) {
+llvm::Value *EndCond = End->codegen();
+  if (!EndCond)
     return nullptr;
-  }
+
+  // Reload, increment, and restore the alloca.  This handles the case where
+  // the body of the loop mutates the variable.
+llvm::Value *CurVar =
+      builder->CreateLoad(Alloca->getAllocatedType(), Alloca, VarName.c_str());
+llvm::Value *NextVar = builder->CreateFAdd(CurVar, StepVal, "nextvar");
+  builder->CreateStore(NextVar, Alloca);
 
   // Convert condition to a bool by comparing non-equal to 0.0.
   EndCond = builder->CreateFCmpONE(
       EndCond, llvm::ConstantFP::get(*the_context, llvm::APFloat(0.0)), "loopcond");
+
   // Create the "after loop" block and insert it.
-  llvm::BasicBlock *LoopEndBB = builder->GetInsertBlock();
-  llvm::BasicBlock *AfterBB =
-      llvm::BasicBlock::Create(*the_context, "afterloop", TheFunction);
+llvm::BasicBlock *AfterBB =
+    llvm::BasicBlock::Create(*the_context, "afterloop", TheFunction);
 
   // Insert the conditional branch into the end of LoopEndBB.
   builder->CreateCondBr(EndCond, LoopBB, AfterBB);
 
   // Any new code will be inserted in AfterBB.
-  builder->SetInsertPoint(AfterBB);  // Add a new entry to the PHI node for the backedge.
-  Variable->addIncoming(NextVar, LoopEndBB);
+  builder->SetInsertPoint(AfterBB);
 
   // Restore the unshadowed variable.
-  if (OldVal) {
+  if (OldVal)
     named_values[VarName] = OldVal;
-  } else {
+  else
     named_values.erase(VarName);
-  }
 
   // for expr always returns 0.0.
-  return llvm::Constant::getNullValue(llvm::Type::getDoubleTy(*the_context));
+  return llvm::Constant::getNullValue(llvm::Type::getDoubleTy(*the_context));;
 }
 
 llvm::Value* UnaryExprAST::codegen() {
@@ -350,6 +393,53 @@ llvm::Value* UnaryExprAST::codegen() {
 
 }
 
+llvm::Value* VarExprAST::codegen() {
+  std::vector<llvm::AllocaInst *> OldBindings;
+
+  llvm::Function *TheFunction = builder->GetInsertBlock()->getParent();
+
+  // Register all variables and emit their initializer.
+  for (auto & [fst, snd] : VarNames) {
+    const std::string &VarName = fst;
+    ExprAST *Init = snd.get();
+    // Emit the initializer before adding the variable to scope, this prevents
+    // the initializer from referencing the variable itself, and permits stuff
+    // like this:
+    //  var a = 1 in
+    //    var a = a in ...   # refers to outer 'a'.
+    llvm::Value *InitVal;
+    if (Init) {
+      InitVal = Init->codegen();
+      if (!InitVal)
+        return nullptr;
+    } else { // If not specified, use 0.0.
+      InitVal = llvm::ConstantFP::get(*the_context, llvm::APFloat(0.0));
+    }
+
+    llvm::AllocaInst *Alloca = CreateEntryBlockAlloca(TheFunction, VarName);
+    builder->CreateStore(InitVal, Alloca);
+
+    // Remember the old variable binding so that we can restore the binding when
+    // we unrecurse.
+    OldBindings.push_back(named_values[VarName]);
+
+    // Remember this binding.
+    named_values[VarName] = Alloca;
+    // Codegen the body, now that all vars are in scope.
+    llvm::Value *BodyVal = Body->codegen();
+    if (!BodyVal)
+      return nullptr;
+    // Pop all our variables from scope.
+    for (unsigned i = 0, e = VarNames.size(); i != e; ++i)
+      named_values[VarNames[i].first] = OldBindings[i];
+
+    // Return the body computation.
+    return BodyVal;
+  }
+}
+
+std::unique_ptr<ExprAST> ParseVarExpr();
+
 static std::unique_ptr<ExprAST> ParsePrimary() {
   switch (cur_tok) {
     default:
@@ -364,5 +454,60 @@ static std::unique_ptr<ExprAST> ParsePrimary() {
       return ParseIfExpr();
     case Token::k_tok_for:
       return ParseForExpr();
+    case Token::k_tok_var:
+      return ParseVarExpr();
   }
+}
+
+/// CreateEntryBlockAlloca - Create an alloca instruction in the entry block of
+/// the function.  This is used for mutable variables etc.
+llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Function *TheFunction,
+                                                llvm::StringRef VarName) {
+  llvm::IRBuilder<> TmpB(&TheFunction->getEntryBlock(),
+                         TheFunction->getEntryBlock().begin());
+  return TmpB.CreateAlloca(llvm::Type::getDoubleTy(*the_context), nullptr,
+                           VarName);
+}
+
+std::unique_ptr<ExprAST> ParseVarExpr() {
+  get_next_token();  // eat the var.
+
+  std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+
+  // At least one variable name is required.
+  if (cur_tok != Token::k_tok_identifier)
+    return LogError("expected identifier after var");
+  while (true) {
+    std::string Name = identifier_str;
+    get_next_token();  // eat identifier.
+
+    // Read the optional initializer.
+    std::unique_ptr<ExprAST> Init;
+    if (cur_tok == static_cast<Token>('=')) {
+      get_next_token(); // eat the '='.
+
+      Init = ParseExpression();
+      if (!Init) return nullptr;
+    }
+
+    VarNames.push_back(std::make_pair(Name, std::move(Init)));
+
+    // End of var list, exit loop.
+    if (cur_tok != static_cast<Token>(',')) break;
+    get_next_token(); // eat the ','.
+
+    if (cur_tok != Token::k_tok_identifier)
+      return LogError("expected identifier list after var");
+  }
+  // At this point, we have to have 'in'.
+  if (cur_tok != Token::k_tok_in)
+    return LogError("expected 'in' keyword after 'var'");
+  get_next_token();  // eat 'in'.
+
+  auto Body = ParseExpression();
+  if (!Body)
+    return nullptr;
+
+  return std::make_unique<VarExprAST>(std::move(VarNames),
+                                       std::move(Body));
 }

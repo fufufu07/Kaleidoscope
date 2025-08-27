@@ -129,6 +129,9 @@ Token get_tok() {
     if (identifier_str == "unary") {
       return Token::k_tok_unary;
     }
+    if (identifier_str == "var") {
+      return Token::k_tok_var;
+    }
     return Token::k_tok_identifier;
   }
   if (isdigit(last_char) || last_char == '.') {

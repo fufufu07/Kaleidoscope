@@ -28,5 +28,7 @@ enum class Token : int32_t {
   k_tok_in = -11,
 
   k_tok_binary = -12,
-  k_tok_unary = -13
+  k_tok_unary = -13,
+
+  k_tok_var = -14
 };
