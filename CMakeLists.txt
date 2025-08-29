@@ -24,6 +24,8 @@ add_executable(Kaleidoscope main.cpp Lexer.cpp
         Optimize.cpp
         Optimize.cpp
         "control flow.cpp"
+        Debug.cpp
+        Debug.h
 )
 # 链接LLVM库
 llvm_map_components_to_libnames(LLVM_LIBS core support irreader)

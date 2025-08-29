@@ -5,15 +5,25 @@
 #include <utility>
 #include <vector>
 
+#include "Debug.h"
 #include "Token.h"
 #include "llvm/IR/Value.h"
 
 /// ExprAST - Base class for all expression nodes.
 class ExprAST {
+private:
+	SourceLocation loc_;
 public:
+	ExprAST(SourceLocation loc) : loc_(loc) {}
 	virtual ~ExprAST() = default;
 
 	virtual llvm::Value *codegen() = 0; /// Generate LLVM code for this expression
+
+	int getLine() const { return loc_.Line; }
+	int getCol() const { return loc_.Col; }
+	virtual llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) {
+		return out << ':' << getLine() << ':' << getCol() << '\n';
+	}
 };
 
 /// NumberExprAST - Expression class for numeric literals like "1.0".
