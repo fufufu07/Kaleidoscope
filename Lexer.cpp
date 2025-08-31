@@ -98,9 +98,9 @@ Token get_tok() {
 
   if (isalpha(last_char)) {
     // identifier: [a-zA-Z][a-zA-Z0-9]*
-    identifier_str = last_char;
+    identifier_str.assign(1, static_cast<char>(last_char));
     while (isalnum((last_char = getchar())))
-      identifier_str += last_char;
+      identifier_str += static_cast<char>(last_char);
 
     if (identifier_str == "def") {
       return Token::k_tok_def;
@@ -138,7 +138,7 @@ Token get_tok() {
     // Number: [0-9.]+
     std::string NumStr;
     do {
-      NumStr += last_char;
+      NumStr += static_cast<char>(last_char);
       last_char = getchar();
     } while (isdigit(last_char) || last_char == '.');
 

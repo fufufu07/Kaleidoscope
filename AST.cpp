@@ -4,6 +4,7 @@
 
 #include <map>
 #include <memory>
+#include <cassert>
 
 #include "Debug.h"
 #include "Lexer.h"
@@ -21,9 +22,7 @@ extern std::unique_ptr<llvm::FunctionPassManager> the_fpm;
 extern std::unique_ptr<llvm::FunctionAnalysisManager> the_fam;
 extern std::map<std::string, std::unique_ptr<PrototypeAst> > function_protos;
 
-llvm::Function *get_function(std::string name);
-std::unique_ptr<ExprAST> ParseIfExpr();
-std::unique_ptr<ExprAST> ParseForExpr();
+llvm::Function *get_function(const std::string& name);
 llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Function *TheFunction,
                                                 llvm::StringRef VarName);
 llvm::DISubroutineType *CreateFunctionType(unsigned NumArgs);
@@ -92,13 +91,13 @@ llvm::Value* BinaryExprAST::codegen() {
     return nullptr;
 
   switch (op_) {
-    case '+':
+    case static_cast<Token>('+'):
       return builder->CreateFAdd(L, R, "addtmp");
-    case '-':
+    case static_cast<Token>('-'):
       return builder->CreateFSub(L, R, "subtmp");
-    case '*':
+    case static_cast<Token>('*'):
       return builder->CreateFMul(L, R, "multmp");
-    case '<':
+    case static_cast<Token>('<'):
       L = builder->CreateFCmpULT(L, R, "cmptmp");
       // Convert bool 0/1 to double 0.0 or 1.0
       return builder->CreateUIToFP(L, llvm::Type::getDoubleTy(*the_context), "booltmp");
@@ -108,7 +107,8 @@ llvm::Value* BinaryExprAST::codegen() {
 
   // If it wasn't a builtin binary operator, it must be a user defined one. Emit
   // a call to it.
-  llvm::Function *F = get_function(std::string("binary") + std::to_string(static_cast<int>(op_)));
+  const char op_char = static_cast<char>(static_cast<int>(op_));
+  llvm::Function *F = get_function(std::string("binary") + std::string(1, op_char));
   assert(F && "binary operator not found!");
 
   llvm::Value *Ops[] = {L, R};
@@ -198,7 +198,7 @@ llvm::Function* FunctionAST::codegen() {
 
   // If this is an operator, install it.
   if (p.is_binary_op())
-    binop_precedence[static_cast<Token>(p.get_operator_name())] = p.get_binary_precedence();
+    binop_precedence[static_cast<Token>(p.get_operator_name())] = static_cast<int>(p.get_binary_precedence());
 
   // Create a new basic block to start insertion into.
   llvm::BasicBlock *bb = llvm::BasicBlock::Create(*the_context, "entry", the_function);
@@ -442,7 +442,7 @@ llvm::Value* UnaryExprAST::codegen() {
   if (!f)
     return LogErrorV("Unknown unary operator");
   KSDbgInfo.emitLocation(this);
-  return builder->CreateCall(f, OperandV, "unop");
+  return builder->CreateCall(f, {OperandV}, "unop");
 
 }
 
@@ -478,41 +478,25 @@ llvm::Value* VarExprAST::codegen() {
 
     // Remember this binding.
     named_values[VarName] = Alloca;
+  }
 
-    KSDbgInfo.emitLocation(this);
+  KSDbgInfo.emitLocation(this);
 
-    // Codegen the body, now that all vars are in scope.
-    llvm::Value *BodyVal = Body->codegen();
-    if (!BodyVal)
-      return nullptr;
-    // Pop all our variables from scope.
-    for (unsigned i = 0, e = VarNames.size(); i != e; ++i)
+  // Codegen the body, now that all vars are in scope.
+  llvm::Value *BodyVal = Body->codegen();
+  if (!BodyVal)
+    return nullptr;
+
+  // Pop all our variables from scope.
+  for (unsigned i = 0, e = VarNames.size(); i != e; ++i) {
+    if (OldBindings[i])
       named_values[VarNames[i].first] = OldBindings[i];
-
-    // Return the body computation.
-    return BodyVal;
+    else
+      named_values.erase(VarNames[i].first);
   }
-}
 
-std::unique_ptr<ExprAST> ParseVarExpr();
-
-static std::unique_ptr<ExprAST> ParsePrimary() {
-  switch (cur_tok) {
-    default:
-      return LogError("unknown token when expecting an expression");
-    case Token::k_tok_identifier:
-      return ParseIdentifierExpr();
-    case Token::k_tok_number:
-      return ParseNumberExpr();
-    case '(':
-      return ParseParenExpr();
-    case Token::k_tok_if:
-      return ParseIfExpr();
-    case Token::k_tok_for:
-      return ParseForExpr();
-    case Token::k_tok_var:
-      return ParseVarExpr();
-  }
+  // Return the body computation.
+  return BodyVal;
 }
 
 /// CreateEntryBlockAlloca - Create an alloca instruction in the entry block of
@@ -523,47 +507,4 @@ llvm::AllocaInst *CreateEntryBlockAlloca(llvm::Function *TheFunction,
                          TheFunction->getEntryBlock().begin());
   return TmpB.CreateAlloca(llvm::Type::getDoubleTy(*the_context), nullptr,
                            VarName);
-}
-
-std::unique_ptr<ExprAST> ParseVarExpr() {
-  get_next_token();  // eat the var.
-
-  std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
-
-  // At least one variable name is required.
-  if (cur_tok != Token::k_tok_identifier)
-    return LogError("expected identifier after var");
-  while (true) {
-    std::string Name = identifier_str;
-    get_next_token();  // eat identifier.
-
-    // Read the optional initializer.
-    std::unique_ptr<ExprAST> Init;
-    if (cur_tok == static_cast<Token>('=')) {
-      get_next_token(); // eat the '='.
-
-      Init = ParseExpression();
-      if (!Init) return nullptr;
-    }
-
-    VarNames.push_back(std::make_pair(Name, std::move(Init)));
-
-    // End of var list, exit loop.
-    if (cur_tok != static_cast<Token>(',')) break;
-    get_next_token(); // eat the ','.
-
-    if (cur_tok != Token::k_tok_identifier)
-      return LogError("expected identifier list after var");
-  }
-  // At this point, we have to have 'in'.
-  if (cur_tok != Token::k_tok_in)
-    return LogError("expected 'in' keyword after 'var'");
-  get_next_token();  // eat 'in'.
-
-  auto Body = ParseExpression();
-  if (!Body)
-    return nullptr;
-
-  return std::make_unique<VarExprAST>(std::move(VarNames),
-                                       std::move(Body));
 }

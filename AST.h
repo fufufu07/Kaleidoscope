@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <memory>
 #include <string>
 #include <utility>
@@ -31,7 +32,7 @@ class NumberExprAST : public ExprAST {
 	double val_;
 
 public:
-	explicit NumberExprAST(double val) noexcept : val_(val) {
+	explicit NumberExprAST(SourceLocation loc, double val) noexcept : ExprAST(loc), val_(val) {
 	}
 
 	[[nodiscard]] double GetValue() const noexcept { return val_; }
@@ -44,7 +45,7 @@ class VariableExprAST : public ExprAST {
 	std::string name_;
 
 public:
-	explicit VariableExprAST(std::string name) : name_(std::move(name)) {
+	explicit VariableExprAST(SourceLocation loc, std::string name) : ExprAST(loc), name_(std::move(name)) {
 	}
 
 	[[nodiscard]] const std::string &GetName() const noexcept { return name_; }
@@ -58,9 +59,9 @@ class BinaryExprAST : public ExprAST {
 	std::unique_ptr<ExprAST> lhs_, rhs_;
 
 public:
-	BinaryExprAST(Token op, std::unique_ptr<ExprAST> lhs,
+	BinaryExprAST(SourceLocation loc, Token op, std::unique_ptr<ExprAST> lhs,
 	              std::unique_ptr<ExprAST> rhs) noexcept
-		: op_(op), lhs_(std::move(lhs)), rhs_(std::move(rhs)) {
+		: ExprAST(loc), op_(op), lhs_(std::move(lhs)), rhs_(std::move(rhs)) {
 	}
 
 	[[nodiscard]] Token GetOp() const noexcept { return op_; }
@@ -76,8 +77,8 @@ class CallExprAST : public ExprAST {
 	std::vector<std::unique_ptr<ExprAST> > args_; // Arguments to the function call
 
 public:
-	CallExprAST(std::string callee, std::vector<std::unique_ptr<ExprAST> > args)
-		: callee_(std::move(callee)), args_(std::move(args)) {
+	CallExprAST(SourceLocation loc, std::string callee, std::vector<std::unique_ptr<ExprAST> > args)
+		: ExprAST(loc), callee_(std::move(callee)), args_(std::move(args)) {
 	}
 
 	[[nodiscard]] const std::string &GetCallee() const noexcept {
@@ -160,9 +161,9 @@ class IfExprAST : public ExprAST {
 	std::unique_ptr<ExprAST> Else;
 
 public:
-	IfExprAST(std::unique_ptr<ExprAST> Cond, std::unique_ptr<ExprAST> Then,
+	IfExprAST(SourceLocation loc, std::unique_ptr<ExprAST> Cond, std::unique_ptr<ExprAST> Then,
 	          std::unique_ptr<ExprAST> Else)
-		: Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {
+		: ExprAST(loc), Cond(std::move(Cond)), Then(std::move(Then)), Else(std::move(Else)) {
 	}
 
 	llvm::Value *codegen() override;
@@ -174,10 +175,10 @@ class ForExprAST : public ExprAST {
 	std::unique_ptr<ExprAST> Start, End, Step, Body;
 
 public:
-	ForExprAST(std::string VarName, std::unique_ptr<ExprAST> Start,
+	ForExprAST(SourceLocation loc, std::string VarName, std::unique_ptr<ExprAST> Start,
 	           std::unique_ptr<ExprAST> End, std::unique_ptr<ExprAST> Step,
 	           std::unique_ptr<ExprAST> Body)
-		: VarName(std::move(VarName)), Start(std::move(Start)), End(std::move(End)),
+		: ExprAST(loc), VarName(std::move(VarName)), Start(std::move(Start)), End(std::move(End)),
 		  Step(std::move(Step)), Body(std::move(Body)) {
 	}
 
@@ -190,8 +191,8 @@ class UnaryExprAST : public ExprAST {
 	std::unique_ptr<ExprAST> Operand;
 
 public:
-	UnaryExprAST(char Opcode, std::unique_ptr<ExprAST> Operand)
-		: Opcode(Opcode), Operand(std::move(Operand)) {}
+	UnaryExprAST(SourceLocation loc, char Opcode, std::unique_ptr<ExprAST> Operand)
+		: ExprAST(loc), Opcode(Opcode), Operand(std::move(Operand)) {}
 
 	llvm::Value *codegen() override;
 };
@@ -202,9 +203,9 @@ class VarExprAST : public ExprAST {
 	std::unique_ptr<ExprAST> Body;
 
 public:
-	VarExprAST(std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
+	VarExprAST(SourceLocation loc, std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames,
 						 std::unique_ptr<ExprAST> Body)
-		: VarNames(std::move(VarNames)), Body(std::move(Body)) {}
+		: ExprAST(loc), VarNames(std::move(VarNames)), Body(std::move(Body)) {}
 
 	llvm::Value *codegen() override;
 };

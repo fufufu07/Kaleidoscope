@@ -3,6 +3,7 @@
 #include <expected>
 #include <memory>
 #include <string_view>
+#include <concepts>
 
 #include "AST.h"
 

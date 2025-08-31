@@ -6,9 +6,11 @@
 #define KALEIDOSCOPE_DEBUG_H
 
 #include <memory>
+#include <vector>
 
-#include "AST.h"
 #include "llvm/IR/DIBuilder.h"
+
+class ExprAST; // 前置声明，避免与 AST.h 循环包含
 
 inline std::unique_ptr<llvm::DIBuilder> DBuilder;
 

@@ -1,9 +1,11 @@
 #include "Parser.h"
 
+#include <cctype>
 #include <map>
 #include <print>
 
 #include "Lexer.h"
+#include "Debug.h"  // 包含 CurLoc 的定义
 
 extern Token cur_tok;
 
@@ -12,7 +14,7 @@ extern Token cur_tok;
 std::map<Token, int> binop_precedence{};
 std::unique_ptr<ExprAST> ParseIfExpr();
 
-std::unique_ptr<ExprAST> ParseUnary();
+static std::unique_ptr<ExprAST> ParseUnary();
 
 /// LogError* - These are little helper functions for error handling.
 std::unique_ptr<ExprAST> LogError(std::string_view str) {
@@ -40,7 +42,7 @@ int GetTokPrecedence() {
 
 /// numberexpr ::= number
 std::unique_ptr<ExprAST> ParseNumberExpr() {
-  auto result = std::make_unique<NumberExprAST>(num_val);
+  auto result = std::make_unique<NumberExprAST>(CurLoc, num_val);
   get_next_token();  // consume the number
   return result;
 }
@@ -69,7 +71,7 @@ std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   get_next_token();  // eat identifier.
 
   if (get_current_token() != static_cast<Token>('(')) {  // Simple variable ref.
-    return std::make_unique<VariableExprAST>(std::move(id_name));
+    return std::make_unique<VariableExprAST>(CurLoc, std::move(id_name));
   }
 
   // Call.
@@ -99,7 +101,7 @@ std::unique_ptr<ExprAST> ParseIdentifierExpr() {
   // Eat the ')'.
   get_next_token();
 
-  return std::make_unique<CallExprAST>(std::move(id_name), std::move(args));
+  return std::make_unique<CallExprAST>(CurLoc, std::move(id_name), std::move(args));
 }
 
 /// ParsePrimary - This function handles primary expressions, which can be
@@ -154,7 +156,7 @@ std::unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec,
 
     // Merge LHS/RHS.
     LHS =
-        std::make_unique<BinaryExprAST>(bin_op, std::move(LHS), std::move(rhs));
+        std::make_unique<BinaryExprAST>(CurLoc, bin_op, std::move(LHS), std::move(rhs));
   }  // loop around to the top of the while loop.
 }
 
@@ -299,6 +301,6 @@ static std::unique_ptr<ExprAST> ParseUnary() {
   int Opc = static_cast<int>(cur_tok);
   get_next_token();
   if (auto Operand = ParseUnary())
-    return std::make_unique<UnaryExprAST>(Opc, std::move(Operand));
+    return std::make_unique<UnaryExprAST>(CurLoc, Opc, std::move(Operand));
   return nullptr;
 }

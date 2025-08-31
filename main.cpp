@@ -1,4 +1,3 @@
-#include <KaleidoscopeJIT.h>
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
@@ -7,6 +6,13 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/IR/LegacyPassManager.h"
+
+// 简化版的 JIT 支持
+#include "llvm/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/RTDyldMemoryManager.h"
+#include "llvm/ExecutionEngine/SectionMemoryManager.h"
+#include "llvm/ExecutionEngine/MCJIT.h"
 
 #include <print>
 
@@ -17,36 +23,15 @@
 #include "Lexer.h"
 #include "Parser.h"
 
-// Forward declarations for handlers
+// Forward declarations for handlers (implemented in Optimize.cpp)
 void HandleDefinition();
 void HandleExtern();
 void HandleTopLevelExpression();
 void InitializeModuleAndManagers();
 
-extern std::unique_ptr<llvm::orc::KaleidoscopeJIT> the_jit;
 extern llvm::ExitOnError exit_on_err;
 extern std::unique_ptr<llvm::Module> the_module;
 
-
-/// HandleDefinition - Handle function definitions
-void HandleDefinition() {
-  if (auto fn_ast = ParseDefinition()) {
-    std::println(stderr, "Parsed a function definition.");
-  } else {
-    // Skip token for error recovery.
-    get_next_token();
-  }
-}
-
-/// HandleExtern - Handle external declarations
-void HandleExtern() {
-  if (auto proto_ast = ParseExtern()) {
-    std::println(stderr, "Parsed an extern.");
-  } else {
-    // Skip token for error recovery.
-    get_next_token();
-  }
-}
 /// WrapAsTopLevel - Wrap an expression as a top-level function
 std::unique_ptr<FunctionAST> parse_top_level_expr() {
   if (auto expr = ParseExpression()) {
@@ -107,8 +92,6 @@ int main() {
   get_next_token();
 
   // Initialize the LLVM context, module, and builder.
-  the_jit = exit_on_err(llvm::orc::KaleidoscopeJIT::Create());
-
   InitializeModuleAndManagers();
 
   // Add the current debug info version into the module.
@@ -140,12 +123,10 @@ int main() {
   // Print out all of the generated code.
   the_module->print(llvm::errs(), nullptr);
 
-  // Initialize the target registry etc.
-  llvm::InitializeAllTargetInfos();
-  llvm::InitializeAllTargets();
-  llvm::InitializeAllTargetMCs();
-  llvm::InitializeAllAsmParsers();
-  llvm::InitializeAllAsmPrinters();
+  // Initialize only native target
+  llvm::InitializeNativeTarget();
+  llvm::InitializeNativeTargetAsmPrinter();
+  llvm::InitializeNativeTargetAsmParser();
 
   const auto TargetTriple = llvm::sys::getDefaultTargetTriple();
   the_module->setTargetTriple(llvm::Triple(TargetTriple).str());

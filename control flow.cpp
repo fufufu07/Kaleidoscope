@@ -6,6 +6,7 @@
 
 #include "Lexer.h"
 #include "Parser.h"
+#include "Debug.h"  // 包含 CurLoc 的定义
 class IfExprAST;
 extern Token cur_tok;
 
@@ -40,7 +41,8 @@ std::unique_ptr<ExprAST> ParseIfExpr() {
     return nullptr;
   }
 
-  return std::make_unique<IfExprAST>(std::move(Cond), std::move(Then),
+  // 使用全局 CurLoc
+  return std::make_unique<IfExprAST>(CurLoc, std::move(Cond), std::move(Then),
                                      std::move(Else));
 }
 
@@ -96,7 +98,54 @@ std::unique_ptr<ExprAST> ParseForExpr() {
     return nullptr;
   }
 
-  return std::make_unique<ForExprAST>(IdName, std::move(Start),
+  return std::make_unique<ForExprAST>(CurLoc, IdName, std::move(Start),
                                       std::move(End), std::move(Step),
                                       std::move(Body));
+}
+
+/// ParseVarExpr - This function parses var/in expressions.
+/// var identifier ('=' expression)? (',' identifier ('=' expression)?)* 'in' expression
+std::unique_ptr<ExprAST> ParseVarExpr() {
+  get_next_token(); // eat 'var'
+
+  std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>> VarNames;
+
+  // At least one variable name is required.
+  if (cur_tok != Token::k_tok_identifier)
+    return LogError("expected identifier after var");
+
+  while (true) {
+    std::string Name = identifier_str;
+    get_next_token(); // eat identifier
+
+    // Read the optional initializer.
+    std::unique_ptr<ExprAST> Init;
+    if (cur_tok == static_cast<Token>('=')) {
+      get_next_token(); // eat '='
+
+      Init = ParseExpression();
+      if (!Init) return nullptr;
+    }
+
+    VarNames.emplace_back(Name, std::move(Init));
+
+    // End of this var list?
+    if (cur_tok != static_cast<Token>(','))
+      break;
+    get_next_token(); // eat ','
+
+    if (cur_tok != Token::k_tok_identifier)
+      return LogError("expected identifier after ',' in var");
+  }
+
+  // At this point, we have to have 'in'.
+  if (cur_tok != Token::k_tok_in)
+    return LogError("expected 'in' keyword after 'var'");
+  get_next_token(); // eat 'in'
+
+  auto Body = ParseExpression();
+  if (!Body)
+    return nullptr;
+
+  return std::make_unique<VarExprAST>(CurLoc, std::move(VarNames), std::move(Body));
 }

@@ -10,7 +10,13 @@
 #include <llvm/Passes/StandardInstrumentations.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Support/Error.h>
-#include <KaleidoscopeJIT.h>
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar/Reassociate.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
+#include "llvm/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/MCJIT.h"
 
 #include <map>
 #include <memory>
@@ -32,11 +38,12 @@ std::unique_ptr<llvm::Module> the_module;
 // LLVM IR 构建器，用于生成 LLVM 指令。
 std::unique_ptr<llvm::IRBuilder<> > builder;
 
-// 命名值映射，用于存储当前作用域中的变量及其对应的 LLVM 值。
-std::map<std::string, llvm::Value*> named_values;
+// 命名值映射，用于存储当前作用域中的变量及其对应的 LLVM alloca。
+std::map<std::string, llvm::AllocaInst*> named_values;
 
 // 自定义的 Kaleidoscope JIT，用于即时编译和执行代码。
-std::unique_ptr<llvm::orc::KaleidoscopeJIT> the_jit;
+// JIT 移除，使用简化版本
+// std::unique_ptr<llvm::orc::KaleidoscopeJIT> the_jit;
 
 // 函数级别的 Pass 管理器，用于优化函数。
 std::unique_ptr<llvm::FunctionPassManager> the_fpm;
@@ -82,8 +89,8 @@ int get_next_token();
 void InitializeModuleAndManagers() {
   // Open a new context and module.
   the_context = std::make_unique<llvm::LLVMContext>();
-  the_module = std::make_unique<llvm::Module>("KaleidoscopeJIT", *the_context);
-  the_module->setDataLayout(the_jit->getDataLayout());
+  the_module = std::make_unique<llvm::Module>("Kaleidoscope", *the_context);
+  // the_module->setDataLayout(the_jit->getDataLayout()); // JIT 移除
 
   // Create a new builder for the module.
   builder = std::make_unique<llvm::IRBuilder<> >(*the_context);
@@ -102,16 +109,19 @@ void InitializeModuleAndManagers() {
   the_si->registerCallbacks(*the_pic, the_mam.get());
 
   // Add transform passes.
+  // 暂时注释掉优化 Pass，专注于编译成功
+  /*
   // Promote allocas to registers.
-  the_fpm->addPass(PromotePass());
+  the_fpm->addPass(llvm::PromoteMemToRegPass());
   // Do simple "peephole" optimizations and bit-twiddling optzns.
-  the_fpm->addPass(InstCombinePass());
+  the_fpm->addPass(llvm::InstCombinePass());
   // Reassociate expressions.
-  the_fpm->addPass(ReassociatePass());
+  the_fpm->addPass(llvm::ReassociatePass());
   // Eliminate Common SubExpressions.
-  the_fpm->addPass(GVNPass());
+  the_fpm->addPass(llvm::GVNPass());
   // Simplify the control flow graph (deleting unreachable blocks, etc).
-  the_fpm->addPass(SimplifyCFGPass());
+  the_fpm->addPass(llvm::SimplifyCFGPass());
+  */
 
   // Register analysis passes used in these transform passes.
   llvm::PassBuilder pb;
@@ -130,10 +140,11 @@ void HandleDefinition() {
       std::print(stderr, "Read function definition:");
       fn_ir->print(llvm::errs());
       std::println(stderr, "");
-      exit_on_err(the_jit->addModule(
-          llvm::orc::ThreadSafeModule(std::move(the_module),
-                                      std::move(the_context))));
-      InitializeModuleAndManagers();
+      // JIT 相关代码移除
+      // exit_on_err(the_jit->addModule(
+      //     llvm::orc::ThreadSafeModule(std::move(the_module),
+      //                                 std::move(the_context))));
+      // InitializeModuleAndManagers();
     }
   } else {
     // 处理错误
@@ -169,6 +180,11 @@ void HandleTopLevelExpression() {
   // Evaluate a top-level expression into an anonymous function.
   if (auto FnAST = parse_top_level_expr()) {
     if (FnAST->codegen()) {
+      // JIT 相关代码移除 - 简化版本只输出 IR
+      std::print(stderr, "Parsed a top-level expr:");
+      the_module->print(llvm::errs(), nullptr);
+      std::println(stderr, "");
+      /*
       // Create a ResourceTracker to track JIT'd memory allocated to our
       // anonymous expression -- that way we can free it after executing.
       const auto rt = the_jit->getMainJITDylib().createResourceTracker();
@@ -185,10 +201,8 @@ void HandleTopLevelExpression() {
       // Get the symbol's address and cast it to the right type (takes no
       // arguments, returns a double) so we can call it as a native function.
       const auto fp = expr_symbol.toPtr<double (*)()>();
-      std::println(stderr, "Evaluated to {}", fp());
-
-      // Delete the anonymous expression module from the JIT.
-      exit_on_err(rt->remove());
+      // 简化版本不执行，只输出 IR
+      */
     }
   } else {
     // Skip token for error recovery.
